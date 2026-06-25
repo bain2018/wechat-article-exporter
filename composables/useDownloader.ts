@@ -32,12 +32,13 @@ export default (options: Partial<DownloadArticleOptions> = {}) => {
   const total_count = ref(0);
 
   let downloader: Downloader | null = null;
+  let stopRequested = false;
 
   // 抓取文章内容(html)
   async function downloadArticleHTML(urls: string[]) {
     if (urls.length === 0) {
       toast.warning('提示', '请先选择文章');
-      return;
+      return false;
     }
 
     try {
@@ -81,9 +82,11 @@ export default (options: Partial<DownloadArticleOptions> = {}) => {
       });
 
       await downloader.startDownload('html');
+      return true;
     } catch (error) {
       console.error('【文章内容】抓取失败:', error);
       alert((error as Error).message);
+      return false;
     } finally {
       loading.value = false;
       cleanupDownloader();
@@ -94,7 +97,7 @@ export default (options: Partial<DownloadArticleOptions> = {}) => {
   async function downloadArticleMetadata(urls: string[]) {
     if (urls.length === 0) {
       toast.warning('提示', '请先选择文章');
-      return;
+      return false;
     }
 
     try {
@@ -137,9 +140,11 @@ export default (options: Partial<DownloadArticleOptions> = {}) => {
       });
 
       await downloader.startDownload('metadata');
+      return true;
     } catch (error) {
       console.error('【阅读量】抓取失败:', error);
       alert((error as Error).message);
+      return false;
     } finally {
       loading.value = false;
       cleanupDownloader();
@@ -150,7 +155,7 @@ export default (options: Partial<DownloadArticleOptions> = {}) => {
   async function downloadArticleComment(urls: string[]) {
     if (urls.length === 0) {
       toast.warning('提示', '请先选择文章');
-      return;
+      return false;
     }
 
     try {
@@ -181,20 +186,35 @@ export default (options: Partial<DownloadArticleOptions> = {}) => {
       });
 
       await downloader.startDownload('comments');
+      return true;
     } catch (error) {
       console.error('【留言内容】抓取失败:', error);
       alert((error as Error).message);
+      return false;
     } finally {
       loading.value = false;
       cleanupDownloader();
     }
   }
 
+  // 抓取阅读/评论数元数据和留言内容
+  async function downloadArticleCommentWithMetadata(urls: string[]) {
+    if (urls.length === 0) {
+      toast.warning('提示', '请先选择文章');
+      return false;
+    }
+
+    if (!(await downloadArticleMetadata(urls)) || stopRequested) {
+      return false;
+    }
+    return downloadArticleComment(urls);
+  }
+
   // 修复单篇文章fakeid
   async function fixSingleFakeidTask(urls: string[]) {
     if (urls.length === 0) {
       toast.warning('提示', '请先选择文章');
-      return;
+      return false;
     }
 
     try {
@@ -228,22 +248,27 @@ export default (options: Partial<DownloadArticleOptions> = {}) => {
       });
 
       await downloader.startDownload('fakeid');
+      return true;
     } catch (error) {
       console.error('【fakeid】修复失败:', error);
       alert((error as Error).message);
+      return false;
     } finally {
       loading.value = false;
       cleanupDownloader();
     }
   }
 
-  async function download(type: 'html' | 'metadata' | 'comment' | 'fakeid', urls: string[]) {
+  async function download(type: 'html' | 'metadata' | 'comment' | 'comment-metadata' | 'fakeid', urls: string[]) {
+    stopRequested = false;
     if (type === 'html') {
       await downloadArticleHTML(urls);
     } else if (type === 'metadata') {
       await downloadArticleMetadata(urls);
     } else if (type === 'comment') {
       await downloadArticleComment(urls);
+    } else if (type === 'comment-metadata') {
+      await downloadArticleCommentWithMetadata(urls);
     } else if (type === 'fakeid') {
       await fixSingleFakeidTask(urls);
     }
@@ -257,6 +282,7 @@ export default (options: Partial<DownloadArticleOptions> = {}) => {
   }
 
   function stop() {
+    stopRequested = true;
     if (downloader) {
       downloader.stop();
       // 注意：不在此处清理监听器，等 download:stop 事件触发后由 finally 块清理

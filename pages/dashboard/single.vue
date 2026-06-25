@@ -600,13 +600,15 @@ async function removeRows() {
             :items="[
               { label: '修复fakeid', event: 'fix-fakeid' },
               { label: '文章内容', event: 'download-article-html' },
-              { label: '阅读量 (需要Credential)', event: 'download-article-metadata' },
+              { label: '阅读量/评论数 (需要Credential)', event: 'download-article-metadata' },
               { label: '留言内容 (需要Credential)', event: 'download-article-comment' },
+              { label: '留言内容 + 评论数 (需要Credential)', event: 'download-article-comment-metadata' },
             ]"
             @fix-fakeid="download('fakeid', selectedArticleUrls)"
             @download-article-html="download('html', selectedArticleUrls)"
             @download-article-metadata="download('metadata', selectedArticleUrls)"
             @download-article-comment="download('comment', selectedArticleUrls)"
+            @download-article-comment-metadata="download('comment-metadata', selectedArticleUrls)"
           >
             <UButton
               :loading="downloadBtnLoading"

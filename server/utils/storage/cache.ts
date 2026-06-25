@@ -104,6 +104,8 @@ export async function executeCacheOperation(op: string, payload: any) {
       return getResourceMap(payload.url);
     case 'getBlobAsset':
       return getBlobAsset(payload.kind, payload.url);
+    case 'getArticleDownloadStates':
+      return getArticleDownloadStates(payload.urls || []);
     case 'getDebugInfo':
       return getDebugInfo();
     default:
@@ -171,6 +173,42 @@ export async function getBlobAsset(kind: string, url: string) {
     sizeBytes: Number(row.size_bytes),
     sha256: row.sha256,
   };
+}
+
+async function getArticleDownloadStates(urls: string[]) {
+  if (urls.length === 0) {
+    return {};
+  }
+
+  const result = await getPool().query(
+    `
+      WITH input(url) AS (
+        SELECT unnest($1::text[])
+      )
+      SELECT
+        input.url,
+        html.cache_key IS NOT NULL AS content_download,
+        comments.url IS NOT NULL AS comment_download,
+        metadata.data AS metadata
+      FROM input
+      LEFT JOIN wx_blob_assets html
+        ON html.kind = 'html' AND html.url = input.url
+      LEFT JOIN wx_comments comments
+        ON comments.url = input.url
+      LEFT JOIN wx_metadata metadata
+        ON metadata.url = input.url
+    `,
+    [urls],
+  );
+
+  return result.rows.reduce<Record<string, any>>((acc, row) => {
+    acc[row.url] = {
+      contentDownload: row.content_download,
+      commentDownload: row.comment_download,
+      metadata: row.metadata || undefined,
+    };
+    return acc;
+  }, {});
 }
 
 async function updateArticleCache(account: any, publishPage: any) {

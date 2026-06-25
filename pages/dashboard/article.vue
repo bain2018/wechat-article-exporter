@@ -24,11 +24,10 @@ import AccountSelectorForArticle from '~/components/selector/AccountSelectorForA
 import { isDev, websiteName } from '~/config';
 import { sharedGridOptions } from '~/config/shared-grid-options';
 import { articleDeleted, getArticleCache, updateArticleStatus } from '~/store/v2/article';
-import { getCommentCache } from '~/store/v2/comment';
+import { getArticleDownloadStates } from '~/store/v2/cache-state';
 import { getDebugCache } from '~/store/v2/debug';
-import { getHtmlCache } from '~/store/v2/html';
 import { type MpAccount } from '~/store/v2/info';
-import { getMetadataCache, type Metadata } from '~/store/v2/metadata';
+import type { Metadata } from '~/store/v2/metadata';
 import type { Preferences } from '~/types/preferences';
 import type { AppMsgExWithFakeID } from '~/types/types';
 import type { ArticleMetadata } from '~/utils/download/types';
@@ -369,10 +368,12 @@ async function switchTableData(fakeid: string) {
   loading.value = true;
   const articles: Article[] = [];
   const data = await getArticleCache(fakeid, Math.floor(Date.now() / 1000));
+  const downloadStates = await getArticleDownloadStates(data.map(article => article.link));
   for (const article of data) {
-    const contentDownload = (await getHtmlCache(article.link)) !== undefined;
-    const commentDownload = (await getCommentCache(article.link)) !== undefined;
-    const metadata = await getMetadataCache(article.link);
+    const state = downloadStates[article.link];
+    const contentDownload = state?.contentDownload || false;
+    const commentDownload = state?.commentDownload || false;
+    const metadata = state?.metadata;
     if (metadata) {
       articles.push({
         ...metadata,
@@ -541,12 +542,14 @@ function copyWechatLink() {
           <ButtonGroup
             :items="[
               { label: '文章内容', event: 'download-article-html' },
-              { label: '阅读量 (需要Credential)', event: 'download-article-metadata' },
+              { label: '阅读量/评论数 (需要Credential)', event: 'download-article-metadata' },
               { label: '留言内容 (需要Credential)', event: 'download-article-comment' },
+              { label: '留言内容 + 评论数 (需要Credential)', event: 'download-article-comment-metadata' },
             ]"
             @download-article-html="download('html', selectedArticleUrls)"
             @download-article-metadata="download('metadata', selectedArticleUrls)"
             @download-article-comment="download('comment', selectedArticleUrls)"
+            @download-article-comment-metadata="download('comment-metadata', selectedArticleUrls)"
           >
             <UButton
               :loading="downloadBtnLoading"
