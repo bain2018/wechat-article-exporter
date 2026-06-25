@@ -50,8 +50,10 @@ WORKDIR /app
 
 # 复制构建输出
 COPY --from=build-env /app/.output ./
-# puppeteer 被 Rollup external 排除，运行时需要从 node_modules 加载（Chromium 已通过 apt 安装，跳过下载）
-RUN npm install --no-save --ignore-scripts puppeteer@24
+# Nitro 输出的服务端依赖需要在运行时镜像内安装；puppeteer 被 Rollup external 排除，也需要从 node_modules 加载
+# Chromium 已通过 apt 安装，跳过 puppeteer 的浏览器下载
+RUN cd server && npm install --omit=dev --ignore-scripts \
+    && cd /app && npm install --no-save --ignore-scripts puppeteer@24
 
 # 创建 KV 存储目录并设置权限（以 root 运行，确保 node 用户可写）
 RUN mkdir -p .data/kv && chown -R node:node /app

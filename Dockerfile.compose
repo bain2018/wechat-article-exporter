@@ -1,0 +1,42 @@
+# Compose 本机运行镜像：复用官方运行时中的 Chromium/字体，避免本机 Docker 构建阶段重复 apt 安装。
+FROM ghcr.io/wechat-article/wechat-article-exporter:latest AS build-env
+
+USER root
+WORKDIR /src
+
+ENV HTTP_PROXY= \
+    HTTPS_PROXY= \
+    ALL_PROXY= \
+    http_proxy= \
+    https_proxy= \
+    all_proxy= \
+    NODE_ENV=production \
+    NITRO_KV_DRIVER=fs \
+    NITRO_KV_BASE=.data/kv
+
+RUN yarn --version
+
+COPY package.json yarn.lock ./
+RUN yarn install --frozen-lockfile && yarn cache clean
+
+COPY . .
+RUN NODE_OPTIONS=--max-old-space-size=4096 yarn build
+
+FROM ghcr.io/wechat-article/wechat-article-exporter:latest
+
+USER root
+WORKDIR /app
+
+ENV HTTP_PROXY= \
+    HTTPS_PROXY= \
+    ALL_PROXY= \
+    http_proxy= \
+    https_proxy= \
+    all_proxy=
+
+RUN rm -rf /app/server /app/public /app/nitro.json
+COPY --from=build-env /src/.output ./
+RUN chown -R node:node /app
+
+USER node
+ENTRYPOINT ["node", "server/index.mjs"]

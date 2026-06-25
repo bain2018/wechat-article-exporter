@@ -1,7 +1,12 @@
 import { db } from './db';
+import { isRemoteStorageEnabled, remoteCache } from './remote';
 
 // 删除公众号数据
 export async function deleteAccountData(ids: string[]): Promise<void> {
+  if (await isRemoteStorageEnabled()) {
+    await remoteCache<boolean>('deleteAccountData', { ids });
+    return;
+  }
   return db.transaction(
     'rw',
     [

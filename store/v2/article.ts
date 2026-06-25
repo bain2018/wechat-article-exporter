@@ -1,6 +1,7 @@
 import type { AppMsgExWithFakeID, PublishInfo, PublishPage } from '~/types/types';
 import { db } from './db';
 import { type MpAccount, updateInfoCache } from './info';
+import { isRemoteStorageEnabled, remoteCache } from './remote';
 
 export type ArticleAsset = AppMsgExWithFakeID;
 
@@ -10,6 +11,10 @@ export type ArticleAsset = AppMsgExWithFakeID;
  * @param publish_page
  */
 export async function updateArticleCache(account: MpAccount, publish_page: PublishPage) {
+  if (await isRemoteStorageEnabled()) {
+    await remoteCache<boolean>('updateArticleCache', { account, publish_page });
+    return;
+  }
   await db.transaction('rw', ['article', 'info'], async () => {
     const keys = await db.article.toCollection().keys();
 
@@ -57,6 +62,9 @@ export async function updateArticleCache(account: MpAccount, publish_page: Publi
  * @param create_time 创建时间
  */
 export async function hitCache(fakeid: string, create_time: number): Promise<boolean> {
+  if (await isRemoteStorageEnabled()) {
+    return (await remoteCache<boolean>('hitArticleCache', { fakeid, create_time })) ?? false;
+  }
   const count = await db.article
     .where('fakeid')
     .equals(fakeid)
@@ -71,6 +79,9 @@ export async function hitCache(fakeid: string, create_time: number): Promise<boo
  * @param create_time 创建时间
  */
 export async function getArticleCache(fakeid: string, create_time: number): Promise<AppMsgExWithFakeID[]> {
+  if (await isRemoteStorageEnabled()) {
+    return (await remoteCache<AppMsgExWithFakeID[]>('getArticleCache', { fakeid, create_time })) || [];
+  }
   return db.article
     .where('fakeid')
     .equals(fakeid)
@@ -84,6 +95,13 @@ export async function getArticleCache(fakeid: string, create_time: number): Prom
  * @param url
  */
 export async function getArticleByLink(url: string): Promise<AppMsgExWithFakeID> {
+  if (await isRemoteStorageEnabled()) {
+    const article = await remoteCache<AppMsgExWithFakeID>('getArticleByLink', { url });
+    if (!article) {
+      throw new Error(`Article(${url}) does not exist`);
+    }
+    return article;
+  }
   const article = await db.article.where('link').equals(url).first();
   if (!article) {
     throw new Error(`Article(${url}) does not exist`);
@@ -93,6 +111,13 @@ export async function getArticleByLink(url: string): Promise<AppMsgExWithFakeID>
 
 // 根据 url 获取 SINGLE_ARTICLE_FAKEID 文章对象
 export async function getSingleArticleByLink(url: string): Promise<AppMsgExWithFakeID> {
+  if (await isRemoteStorageEnabled()) {
+    const article = await remoteCache<AppMsgExWithFakeID>('getSingleArticleByLink', { url });
+    if (!article) {
+      throw new Error(`Article(${url}) does not exist`);
+    }
+    return article;
+  }
   const article = await db.article
     .where('link')
     .equals(url)
@@ -111,6 +136,10 @@ export async function getSingleArticleByLink(url: string): Promise<AppMsgExWithF
  * @param is_deleted
  */
 export async function articleDeleted(url: string, is_deleted = true): Promise<void> {
+  if (await isRemoteStorageEnabled()) {
+    await remoteCache<boolean>('articleDeleted', { url, is_deleted });
+    return;
+  }
   await db.transaction('rw', 'article', async () => {
     await db.article
       .where('link')
@@ -127,6 +156,10 @@ export async function articleDeleted(url: string, is_deleted = true): Promise<vo
  * @param status
  */
 export async function updateArticleStatus(url: string, status: string): Promise<void> {
+  if (await isRemoteStorageEnabled()) {
+    await remoteCache<boolean>('updateArticleStatus', { url, status });
+    return;
+  }
   await db.transaction('rw', 'article', async () => {
     await db.article
       .where('link')
@@ -143,6 +176,10 @@ export async function updateArticleStatus(url: string, status: string): Promise<
  * @param fakeid
  */
 export async function updateArticleFakeid(url: string, fakeid: string): Promise<void> {
+  if (await isRemoteStorageEnabled()) {
+    await remoteCache<boolean>('updateArticleFakeid', { url, fakeid });
+    return;
+  }
   await db.transaction('rw', 'article', async () => {
     await db.article
       .where('link')

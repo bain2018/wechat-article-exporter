@@ -36,6 +36,24 @@
 
 该工具的使用教程已移至 [文档站点](https://docs.mptext.top)。
 
+### PostgreSQL + MinIO 持久化缓存
+
+默认仍使用浏览器 IndexedDB。私有化长期运行时可以开启服务端持久化缓存：
+
+```env
+STORAGE_DRIVER=postgres-minio
+DATABASE_URL=postgres://postgres:postgres@postgres:5432/wechat_article_exporter
+MINIO_ENDPOINT=minio
+MINIO_PORT=9000
+MINIO_USE_SSL=false
+MINIO_ACCESS_KEY=minioadmin
+MINIO_SECRET_KEY=minioadmin
+MINIO_BUCKET=wechat-article-exporter
+MINIO_REGION=us-east-1
+```
+
+开启后，PostgreSQL 保存公众号、文章、下载状态、评论、阅读量和对象索引；MinIO 保存 HTML、图片、CSS、音视频等 Blob 内容。未配置完整环境变量时会自动回退到 IndexedDB。
+
 
 ## :dart: 特性
 

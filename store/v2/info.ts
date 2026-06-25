@@ -1,4 +1,5 @@
 import { db } from './db';
+import { isRemoteStorageEnabled, remoteCache } from './remote';
 
 export interface MpAccount {
   fakeid: string;
@@ -25,6 +26,9 @@ export interface MpAccount {
  * @param mpAccount
  */
 export async function updateInfoCache(mpAccount: MpAccount): Promise<boolean> {
+  if (await isRemoteStorageEnabled()) {
+    return (await remoteCache<boolean>('updateInfoCache', { mpAccount })) ?? true;
+  }
   return db.transaction('rw', 'info', async () => {
     let infoCache = await db.info.get(mpAccount.fakeid);
     if (infoCache) {
@@ -56,6 +60,9 @@ export async function updateInfoCache(mpAccount: MpAccount): Promise<boolean> {
 }
 
 export async function updateLastUpdateTime(fakeid: string): Promise<boolean> {
+  if (await isRemoteStorageEnabled()) {
+    return (await remoteCache<boolean>('updateLastUpdateTime', { fakeid })) ?? true;
+  }
   return db.transaction('rw', 'info', async () => {
     let infoCache = await db.info.get(fakeid);
     if (infoCache) {
@@ -71,15 +78,24 @@ export async function updateLastUpdateTime(fakeid: string): Promise<boolean> {
  * @param fakeid
  */
 export async function getInfoCache(fakeid: string): Promise<MpAccount | undefined> {
+  if (await isRemoteStorageEnabled()) {
+    return remoteCache<MpAccount>('getInfoCache', { fakeid });
+  }
   return db.info.get(fakeid);
 }
 
 export async function getAllInfo(): Promise<MpAccount[]> {
+  if (await isRemoteStorageEnabled()) {
+    return (await remoteCache<MpAccount[]>('getAllInfo')) || [];
+  }
   return db.info.toArray();
 }
 
 // 获取公众号的名称
 export async function getAccountNameByFakeid(fakeid: string): Promise<string | null> {
+  if (await isRemoteStorageEnabled()) {
+    return (await remoteCache<string | null>('getAccountNameByFakeid', { fakeid })) || null;
+  }
   const account = await getInfoCache(fakeid);
   if (!account) {
     return null;
@@ -90,6 +106,10 @@ export async function getAccountNameByFakeid(fakeid: string): Promise<string | n
 
 // 批量导入公众号
 export async function importMpAccounts(mpAccounts: MpAccount[]): Promise<void> {
+  if (await isRemoteStorageEnabled()) {
+    await remoteCache<boolean>('importMpAccounts', { mpAccounts });
+    return;
+  }
   for (const mpAccount of mpAccounts) {
     // 导入时需要把相关数量置空
     mpAccount.completed = false;

@@ -1,0 +1,87 @@
+name: wechat-article-exporter-local
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.compose
+    image: wechat-article-exporter:pg-minio-local
+    container_name: wechat-article-exporter-local
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 3000
+      NITRO_KV_DRIVER: fs
+      NITRO_KV_BASE: .data/kv
+      NUXT_DEBUG_MP_REQUEST: "false"
+      STORAGE_DRIVER: postgres-minio
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/wechat_article_exporter
+      MINIO_ENDPOINT: minio
+      MINIO_PORT: 9000
+      MINIO_USE_SSL: "false"
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      MINIO_BUCKET: wechat-article-exporter
+      MINIO_REGION: us-east-1
+    ports:
+      - "3101:3000"
+    volumes:
+      - app-kv:/app/.data/kv
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"fetch('http://127.0.0.1:3000/api/web/storage/status').then(r=>r.json()).then(s=>process.exit(s.enabled&&s.driver==='postgres-minio'?0:1)).catch(()=>process.exit(1))\"",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: wechat-article-exporter-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: wechat_article_exporter
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d wechat_article_exporter"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+    container_name: wechat-article-exporter-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9002:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://127.0.0.1:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  app-kv:
+  postgres-data:
+  minio-data:
