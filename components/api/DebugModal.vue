@@ -73,7 +73,12 @@ function submit() {
     method: selectedApi.value.method,
   })
     .then(resp => {
-      if (resp.headers.get('content-type') === 'application/json') {
+      const contentType = resp.headers.get('content-type') || '';
+      const contentDisposition = resp.headers.get('content-disposition') || '';
+      if (contentDisposition.includes('attachment')) {
+        return downloadResponse(resp, contentDisposition);
+      }
+      if (contentType.includes('application/json')) {
         return resp.json();
       } else {
         return resp.text();
@@ -85,6 +90,28 @@ function submit() {
     .finally(() => {
       btnLoading.value = false;
     });
+}
+
+async function downloadResponse(resp: Response, contentDisposition: string) {
+  const blob = await resp.blob();
+  const filename = parseContentDispositionFilename(contentDisposition) || 'download';
+  const link = document.createElement('a');
+  const objectUrl = URL.createObjectURL(blob);
+  link.href = objectUrl;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(objectUrl);
+  return `已下载文件：${filename} (${blob.size} bytes)`;
+}
+
+function parseContentDispositionFilename(contentDisposition: string): string | undefined {
+  const utf8Filename = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+  if (utf8Filename) {
+    return decodeURIComponent(utf8Filename);
+  }
+  return contentDisposition.match(/filename="([^"]+)"/i)?.[1];
 }
 </script>
 

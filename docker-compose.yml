@@ -32,7 +32,7 @@ services:
     ports:
       - "3101:3000"
     volumes:
-      - /app/data/wechat:/app/.data
+      - app-kv:/app/.data
     healthcheck:
       test:
         [
@@ -55,7 +55,7 @@ services:
     ports:
       - "5433:5432"
     volumes:
-      - /app/data/postgres:/var/lib/postgresql/data
+      - postgres-data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d wechat_article_exporter"]
       interval: 10s
@@ -74,7 +74,7 @@ services:
       - "9002:9000"
       - "9001:9001"
     volumes:
-      - /app/data/minio:/data
+      - minio-data:/data
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://127.0.0.1:9000/minio/health/live"]
       interval: 10s
