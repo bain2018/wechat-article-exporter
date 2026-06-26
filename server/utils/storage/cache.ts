@@ -4,6 +4,7 @@
 
 import type { Pool, PoolClient } from 'pg';
 import { getStorageConfig } from './config';
+import { refreshExportRowsByLinks } from './exportRows';
 import { ensureBucket, putObject } from './minio';
 import { ensurePostgresSchema, getPool } from './postgres';
 
@@ -148,6 +149,9 @@ export async function upsertBlobAsset(kind: string, metadata: any, buffer: Buffe
       metadata,
     ],
   );
+  if (kind === 'html') {
+    await refreshExportRowsByLinks([metadata.url]);
+  }
   return getBlobAsset(kind, metadata.url);
 }
 
@@ -220,11 +224,13 @@ async function updateArticleCache(account: any, publishPage: any) {
     const publishList = (publishPage.publish_list || []).filter((item: any) => !!item.publish_info);
     let msgCount = 0;
     let articleCount = 0;
+    const touchedLinks = new Set<string>();
 
     for (const item of publishList) {
       const publishInfo = JSON.parse(item.publish_info);
       let newEntryCount = 0;
       for (const article of publishInfo.appmsgex || []) {
+        touchedLinks.add(article.link);
         const cacheKey = articleCacheKey(fakeid, article.aid);
         const result = await client.query(
           `
@@ -273,6 +279,7 @@ async function updateArticleCache(account: any, publishPage: any) {
       round_head_img: account.round_head_img,
       total_count: totalCount,
     });
+    await refreshExportRowsByLinks([...touchedLinks], client);
     await client.query('COMMIT');
     return true;
   } catch (error) {
@@ -326,6 +333,7 @@ async function articleDeleted(url: string, isDeleted: boolean) {
     `,
     [url, isDeleted],
   );
+  await refreshExportRowsByLinks([url]);
   return true;
 }
 
@@ -340,6 +348,7 @@ async function updateArticleStatus(url: string, status: string) {
     `,
     [url, status],
   );
+  await refreshExportRowsByLinks([url]);
   return true;
 }
 
@@ -356,6 +365,7 @@ async function updateArticleFakeid(url: string, fakeid: string) {
     `,
     [url, fakeid],
   );
+  await refreshExportRowsByLinks([url]);
   return true;
 }
 
@@ -459,6 +469,7 @@ async function deleteAccountData(ids: string[]) {
     await client.query('DELETE FROM wx_comments WHERE fakeid = ANY($1)', [ids]);
     await client.query('DELETE FROM wx_comment_replies WHERE fakeid = ANY($1)', [ids]);
     await client.query('DELETE FROM wx_resource_maps WHERE fakeid = ANY($1)', [ids]);
+    await client.query('DELETE FROM wx_article_export_rows WHERE fakeid = ANY($1)', [ids]);
     await client.query('COMMIT');
     return true;
   } catch (error) {
@@ -482,6 +493,9 @@ async function upsertJsonRecord(table: string, url: string, fakeid: string, titl
     `,
     [url, fakeid, title || null, data],
   );
+  if (table === 'wx_metadata' || table === 'wx_comments') {
+    await refreshExportRowsByLinks([url]);
+  }
   return true;
 }
 

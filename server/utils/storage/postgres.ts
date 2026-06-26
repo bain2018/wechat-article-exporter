@@ -121,6 +121,51 @@ async function initSchema(): Promise<void> {
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
+
+    CREATE TABLE IF NOT EXISTS wx_article_export_rows (
+      link TEXT PRIMARY KEY,
+      fakeid TEXT NOT NULL,
+      aid TEXT,
+      account_name TEXT,
+      title TEXT,
+      digest TEXT,
+      cover TEXT,
+      author_name TEXT,
+      create_time INTEGER,
+      update_time INTEGER,
+      item_show_type INTEGER,
+      copyright_stat INTEGER,
+      copyright_type INTEGER,
+      is_deleted BOOLEAN,
+      status TEXT NOT NULL DEFAULT '',
+      single_article BOOLEAN NOT NULL DEFAULT false,
+      read_num INTEGER NOT NULL DEFAULT 0,
+      old_like_num INTEGER NOT NULL DEFAULT 0,
+      share_num INTEGER NOT NULL DEFAULT 0,
+      like_num INTEGER NOT NULL DEFAULT 0,
+      comment_num INTEGER NOT NULL DEFAULT 0,
+      content_download BOOLEAN NOT NULL DEFAULT false,
+      comment_download BOOLEAN NOT NULL DEFAULT false,
+      article_data JSONB NOT NULL DEFAULT '{}',
+      metadata_data JSONB,
+      comments_data JSONB,
+      export_data JSONB NOT NULL DEFAULT '{}',
+      html_object_key TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS idx_wx_article_export_rows_fakeid_create_time
+      ON wx_article_export_rows(fakeid, create_time DESC, link);
+    CREATE INDEX IF NOT EXISTS idx_wx_article_export_rows_fakeid_read_num
+      ON wx_article_export_rows(fakeid, read_num DESC, link);
+    CREATE INDEX IF NOT EXISTS idx_wx_article_export_rows_fakeid_comment_num
+      ON wx_article_export_rows(fakeid, comment_num DESC, link);
+    CREATE INDEX IF NOT EXISTS idx_wx_article_export_rows_fakeid_share_num
+      ON wx_article_export_rows(fakeid, share_num DESC, link);
+    CREATE INDEX IF NOT EXISTS idx_wx_article_export_rows_fakeid_like_num
+      ON wx_article_export_rows(fakeid, like_num DESC, link);
+    CREATE INDEX IF NOT EXISTS idx_wx_article_export_rows_fakeid_old_like_num
+      ON wx_article_export_rows(fakeid, old_like_num DESC, link);
   `);
   await applySchemaComments(db);
 }
@@ -201,5 +246,37 @@ async function applySchemaComments(db: pg.Pool): Promise<void> {
     COMMENT ON COLUMN wx_resource_maps.resources IS '文章正文提取出的资源 URL 列表 JSON';
     COMMENT ON COLUMN wx_resource_maps.created_at IS '数据库记录创建时间';
     COMMENT ON COLUMN wx_resource_maps.updated_at IS '数据库记录最后更新时间';
+
+    COMMENT ON TABLE wx_article_export_rows IS '公众号文章导出查询汇总表，将文章基础信息、互动指标、留言缓存状态和 HTML 对象位置汇总为可分页排序筛选的事实表';
+    COMMENT ON COLUMN wx_article_export_rows.link IS '文章原始链接，作为导出汇总行主键';
+    COMMENT ON COLUMN wx_article_export_rows.fakeid IS '所属微信公众号 fakeid，用于按公众号导出和分区式查询';
+    COMMENT ON COLUMN wx_article_export_rows.aid IS '微信文章在公众号文章列表中的文章标识';
+    COMMENT ON COLUMN wx_article_export_rows.account_name IS '微信公众号昵称，导出时对应公众号列';
+    COMMENT ON COLUMN wx_article_export_rows.title IS '文章标题，冗余自 wx_articles 便于直接查询';
+    COMMENT ON COLUMN wx_article_export_rows.digest IS '文章摘要，冗余自文章原始 JSON';
+    COMMENT ON COLUMN wx_article_export_rows.cover IS '导出优先使用的封面地址';
+    COMMENT ON COLUMN wx_article_export_rows.author_name IS '文章作者名';
+    COMMENT ON COLUMN wx_article_export_rows.create_time IS '文章创建时间，Unix 秒级时间戳';
+    COMMENT ON COLUMN wx_article_export_rows.update_time IS '文章发布时间或更新时间，Unix 秒级时间戳';
+    COMMENT ON COLUMN wx_article_export_rows.item_show_type IS '微信文章展示类型，整数化后便于查询';
+    COMMENT ON COLUMN wx_article_export_rows.copyright_stat IS '原创/版权状态字段，整数化后便于查询';
+    COMMENT ON COLUMN wx_article_export_rows.copyright_type IS '版权类型字段，整数化后便于查询';
+    COMMENT ON COLUMN wx_article_export_rows.is_deleted IS '文章是否已删除或不可访问';
+    COMMENT ON COLUMN wx_article_export_rows.status IS '文章下载状态，对应前端 _status 字段';
+    COMMENT ON COLUMN wx_article_export_rows.single_article IS '是否来源于单篇文章下载流程';
+    COMMENT ON COLUMN wx_article_export_rows.read_num IS '阅读数，来自 wx_metadata.data.readNum，缺失时为 0';
+    COMMENT ON COLUMN wx_article_export_rows.old_like_num IS '原点赞数，来自 wx_metadata.data.oldLikeNum，缺失时为 0';
+    COMMENT ON COLUMN wx_article_export_rows.share_num IS '分享/转发数，来自 wx_metadata.data.shareNum，缺失时为 0';
+    COMMENT ON COLUMN wx_article_export_rows.like_num IS '喜欢数，来自 wx_metadata.data.likeNum，缺失时为 0';
+    COMMENT ON COLUMN wx_article_export_rows.comment_num IS '留言数，来自 wx_metadata.data.commentNum，缺失时为 0';
+    COMMENT ON COLUMN wx_article_export_rows.content_download IS '文章 HTML 正文是否已下载到 MinIO';
+    COMMENT ON COLUMN wx_article_export_rows.comment_download IS '文章精选留言是否已抓取';
+    COMMENT ON COLUMN wx_article_export_rows.article_data IS '导出使用的文章基础 JSON，包含 fakeid、_status、is_deleted、_single 等本地扩展字段';
+    COMMENT ON COLUMN wx_article_export_rows.metadata_data IS '互动指标原始 JSON 快照';
+    COMMENT ON COLUMN wx_article_export_rows.comments_data IS '精选留言原始 JSON 快照，不包含独立回复表的展开结果';
+    COMMENT ON COLUMN wx_article_export_rows.export_data IS '接近 JSON/Excel 导出行格式的轻量 JSON，包含文章基础字段、公众号名和互动指标，不重复存储正文全文';
+    COMMENT ON COLUMN wx_article_export_rows.html_object_key IS '文章 HTML 正文在 MinIO 中的对象键，导出正文类格式时按需读取';
+    COMMENT ON COLUMN wx_article_export_rows.created_at IS '数据库记录创建时间';
+    COMMENT ON COLUMN wx_article_export_rows.updated_at IS '汇总行最后刷新时间';
   `);
 }

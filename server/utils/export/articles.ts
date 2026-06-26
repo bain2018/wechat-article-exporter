@@ -9,13 +9,29 @@ import TurndownService from 'turndown';
 import { filterInvalidFilenameChars, formatTimeStamp } from '#shared/utils/helpers';
 import { normalizeHtml, parseCgiDataNew } from '#shared/utils/html';
 import { isRemoteStorageEnabled } from '~/server/utils/storage/cache';
+import { refreshMissingExportRowsByFakeid, refreshMissingExportRowsByUrls } from '~/server/utils/storage/exportRows';
 import { getObject } from '~/server/utils/storage/minio';
 import { getPool } from '~/server/utils/storage/postgres';
 import { createExcelBuffer, type ExcelExportEntity } from '~/utils/exporter';
 
 const SUPPORTED_FORMATS = ['excel', 'json', 'html', 'txt', 'markdown'] as const;
+const METRIC_FIELDS = ['readNum', 'oldLikeNum', 'shareNum', 'likeNum', 'commentNum'] as const;
 
 export type ArticleExportFormat = (typeof SUPPORTED_FORMATS)[number];
+export type MetricField = (typeof METRIC_FIELDS)[number];
+export type SortDirection = 'ASC' | 'DESC';
+export type FilterOperator = '>=' | '<=' | '>' | '<' | '=';
+
+export interface MetricSort {
+  field: MetricField;
+  direction: SortDirection;
+}
+
+export interface MetricFilter {
+  field: MetricField;
+  operator: FilterOperator;
+  value: number;
+}
 
 export interface ArticleExportOptions {
   format: ArticleExportFormat;
@@ -28,6 +44,8 @@ export interface ArticleExportOptions {
   limit?: number;
   page?: number;
   pageSize?: number;
+  sorts?: MetricSort[];
+  metricFilters?: MetricFilter[];
 }
 
 export interface ArticleExportResult {
@@ -80,6 +98,8 @@ export function parseArticleExportInput(input: Record<string, any>): ArticleExpo
     limit: numberValue(input.limit),
     page: numberValue(input.page),
     pageSize: numberValue(input.pageSize ?? input.page_size),
+    sorts: parseSorts(input),
+    metricFilters: parseMetricFilters(input),
   };
 }
 
@@ -159,60 +179,260 @@ function normalizeFormat(format: string): ArticleExportFormat {
   return normalized as ArticleExportFormat;
 }
 
+function parseSorts(input: Record<string, any>): MetricSort[] | undefined {
+  const rawSort = valueOf(input.sort ?? input.order ?? input.order_by);
+  const rawSortBy = valueOf(input.sortBy ?? input.sort_by);
+  const rawDirection = parseSortDirection(valueOf(input.sortOrder ?? input.sort_order), 'DESC');
+  const source = rawSort || rawSortBy;
+  if (!source) {
+    return undefined;
+  }
+
+  const sorts: MetricSort[] = [];
+  const seen = new Set<MetricField>();
+  for (const item of source.split(',').map(part => part.trim()).filter(Boolean)) {
+    const sort = parseSortItem(item, rawSort ? undefined : rawDirection);
+    if (!seen.has(sort.field)) {
+      sorts.push(sort);
+      seen.add(sort.field);
+    }
+  }
+  return sorts.length > 0 ? sorts : undefined;
+}
+
+function parseSortItem(item: string, fallbackDirection?: SortDirection): MetricSort {
+  let raw = item.trim();
+  let direction = fallbackDirection || 'DESC';
+  if (raw.startsWith('-')) {
+    direction = 'DESC';
+    raw = raw.slice(1);
+  } else if (raw.startsWith('+')) {
+    direction = 'ASC';
+    raw = raw.slice(1);
+  }
+
+  const [fieldToken, directionToken] = raw.split(/[:\s]+/).filter(Boolean);
+  const field = normalizeMetricField(fieldToken);
+  if (!field) {
+    throw new ArticleExportError(400, `不支持的排序字段: ${fieldToken}`);
+  }
+  if (directionToken) {
+    direction = parseSortDirection(directionToken, direction);
+  }
+  return { field, direction };
+}
+
+function parseSortDirection(value: string | undefined, fallback: SortDirection): SortDirection {
+  if (!value) {
+    return fallback;
+  }
+  const normalized = value.toLowerCase();
+  if (['asc', 'ascending', '1'].includes(normalized)) {
+    return 'ASC';
+  }
+  if (['desc', 'descending', '-1'].includes(normalized)) {
+    return 'DESC';
+  }
+  throw new ArticleExportError(400, `不支持的排序方向: ${value}`);
+}
+
+function parseMetricFilters(input: Record<string, any>): MetricFilter[] | undefined {
+  const filters: MetricFilter[] = [];
+  const rawFilters = valueOf(input.filters ?? input.filter);
+  if (rawFilters) {
+    filters.push(...parseMetricFilterString(rawFilters));
+  }
+
+  for (const field of METRIC_FIELDS) {
+    appendMetricFilter(filters, field, '>=', findMetricParam(input, field, 'min'));
+    appendMetricFilter(filters, field, '<=', findMetricParam(input, field, 'max'));
+  }
+
+  return filters.length > 0 ? filters : undefined;
+}
+
+function parseMetricFilterString(rawFilters: string): MetricFilter[] {
+  return rawFilters
+    .split(',')
+    .map(part => part.trim())
+    .filter(Boolean)
+    .map(part => {
+      const match = part.match(/^([A-Za-z_]+)\s*(>=|<=|>|<|=)\s*(-?\d+(?:\.\d+)?)$/);
+      if (!match) {
+        throw new ArticleExportError(400, `不支持的筛选表达式: ${part}`);
+      }
+      const field = normalizeMetricField(match[1]);
+      if (!field) {
+        throw new ArticleExportError(400, `不支持的筛选字段: ${match[1]}`);
+      }
+      return {
+        field,
+        operator: match[2] as FilterOperator,
+        value: Number(match[3]),
+      };
+    });
+}
+
+function appendMetricFilter(
+  filters: MetricFilter[],
+  field: MetricField,
+  operator: FilterOperator,
+  value: number | undefined,
+) {
+  if (value !== undefined) {
+    filters.push({ field, operator, value });
+  }
+}
+
+function findMetricParam(input: Record<string, any>, field: MetricField, type: 'min' | 'max'): number | undefined {
+  for (const key of metricParamKeys(field, type)) {
+    const value = numberValue(input[key]);
+    if (value !== undefined) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function metricParamKeys(field: MetricField, type: 'min' | 'max'): string[] {
+  const snake = metricSnakeName(field);
+  const pascal = field[0].toUpperCase() + field.slice(1);
+  return [
+    `${type}_${snake}`,
+    `${snake}_${type}`,
+    `${type}${pascal}`,
+    `${field}${type[0].toUpperCase()}${type.slice(1)}`,
+  ];
+}
+
+function metricSnakeName(field: MetricField): string {
+  return field.replace(/[A-Z]/g, char => `_${char.toLowerCase()}`).replace(/^_/, '');
+}
+
+function normalizeMetricField(field: string | undefined): MetricField | undefined {
+  if (!field) {
+    return undefined;
+  }
+  const normalized = field.replace(/[-_\s]/g, '').toLowerCase();
+  const aliases: Record<string, MetricField> = {
+    read: 'readNum',
+    readnum: 'readNum',
+    view: 'readNum',
+    views: 'readNum',
+    oldlike: 'oldLikeNum',
+    oldlikenum: 'oldLikeNum',
+    likeold: 'oldLikeNum',
+    likeoldnum: 'oldLikeNum',
+    zan: 'oldLikeNum',
+    zannum: 'oldLikeNum',
+    share: 'shareNum',
+    sharenum: 'shareNum',
+    forward: 'shareNum',
+    forwardnum: 'shareNum',
+    repost: 'shareNum',
+    repostnum: 'shareNum',
+    like: 'likeNum',
+    likenum: 'likeNum',
+    favorite: 'likeNum',
+    favoritenum: 'likeNum',
+    comment: 'commentNum',
+    comments: 'commentNum',
+    commentnum: 'commentNum',
+  };
+  return aliases[normalized];
+}
+
+function buildMetricWhereClause(
+  filters: MetricFilter[] | undefined,
+  params: any[],
+  prefix: 'WHERE' | 'AND' = 'WHERE',
+): string {
+  if (!filters || filters.length === 0) {
+    return '';
+  }
+
+  const clauses = filters.map(filter => {
+    params.push(filter.value);
+    return `${metricSqlExpression(filter.field)} ${filter.operator} $${params.length}`;
+  });
+  return `${prefix} ${clauses.join(' AND ')}`;
+}
+
+function buildOrderClause(sorts: MetricSort[] | undefined, fallback: string): string {
+  if (!sorts || sorts.length === 0) {
+    return fallback;
+  }
+  return [...sorts.map(sort => `${metricSqlExpression(sort.field)} ${sort.direction}`), fallback].join(', ');
+}
+
+function metricSqlExpression(field: MetricField): string {
+  return `r.${metricColumnName(field)}`;
+}
+
+function metricColumnName(field: MetricField): string {
+  return metricSnakeName(field);
+}
+
 async function loadArticles(options: ArticleExportOptions): Promise<ArticleLoadResult> {
   const pagination = resolvePagination(options);
   if (options.urls && options.urls.length > 0) {
-    const urls = pagination.enabled ? options.urls.slice(pagination.offset, pagination.offset + pagination.limit) : options.urls;
+    await refreshMissingExportRowsByUrls(options.urls);
+    const totalCount = pagination.enabled ? await countArticlesByUrls(options) : undefined;
+    const params: any[] = [options.urls];
+    const where = buildMetricWhereClause(options.metricFilters, params);
+    params.push(pagination.limit, pagination.offset);
     const result = await getPool().query(
       `
         WITH input(link, ord) AS (
           SELECT * FROM unnest($1::text[]) WITH ORDINALITY
         )
         SELECT
-          a.*,
-          acc.nickname AS account_name,
-          metadata.data AS metadata,
-          comments.data AS comments,
-          html.object_key AS html_object_key
+          r.export_data,
+          r.article_data,
+          r.account_name,
+          r.metadata_data AS metadata,
+          r.comments_data AS comments,
+          r.html_object_key
         FROM input
-        JOIN wx_articles a ON a.link = input.link
-        LEFT JOIN wx_accounts acc ON acc.fakeid = a.fakeid
-        LEFT JOIN wx_metadata metadata ON metadata.url = a.link
-        LEFT JOIN wx_comments comments ON comments.url = a.link
-        LEFT JOIN wx_blob_assets html ON html.kind = 'html' AND html.url = a.link
-        ORDER BY input.ord
+        JOIN wx_article_export_rows r ON r.link = input.link
+        ${where}
+        ORDER BY ${buildOrderClause(options.sorts, 'input.ord')}
+        LIMIT $${params.length - 1}
+        OFFSET $${params.length}
       `,
-      [urls],
+      params,
     );
     return {
       articles: result.rows.map(mapLoadedArticle),
-      totalCount: pagination.enabled ? options.urls.length : undefined,
+      totalCount,
       page: pagination.page,
       pageSize: pagination.pageSize,
     };
   }
 
+  await refreshMissingExportRowsByFakeid(options.fakeid!);
   const totalCount = pagination.enabled ? await countArticles(options) : undefined;
+  const params: any[] = [options.fakeid, options.createTimeBefore || null];
+  const metricWhere = buildMetricWhereClause(options.metricFilters, params, 'AND');
+  params.push(pagination.limit, pagination.offset);
   const result = await getPool().query(
     `
       SELECT
-        a.*,
-        acc.nickname AS account_name,
-        metadata.data AS metadata,
-        comments.data AS comments,
-        html.object_key AS html_object_key
-      FROM wx_articles a
-      LEFT JOIN wx_accounts acc ON acc.fakeid = a.fakeid
-      LEFT JOIN wx_metadata metadata ON metadata.url = a.link
-      LEFT JOIN wx_comments comments ON comments.url = a.link
-      LEFT JOIN wx_blob_assets html ON html.kind = 'html' AND html.url = a.link
-      WHERE a.fakeid = $1
-        AND ($2::int IS NULL OR a.create_time < $2)
-      ORDER BY a.create_time DESC
-      LIMIT $3
-      OFFSET $4
+        r.export_data,
+        r.article_data,
+        r.account_name,
+        r.metadata_data AS metadata,
+        r.comments_data AS comments,
+        r.html_object_key
+      FROM wx_article_export_rows r
+      WHERE r.fakeid = $1
+        AND ($2::int IS NULL OR r.create_time < $2)
+        ${metricWhere}
+      ORDER BY ${buildOrderClause(options.sorts, 'r.create_time DESC')}
+      LIMIT $${params.length - 1}
+      OFFSET $${params.length}
     `,
-    [options.fakeid, options.createTimeBefore || null, pagination.limit, pagination.offset],
+    params,
   );
   return {
     articles: result.rows.map(mapLoadedArticle),
@@ -223,27 +443,43 @@ async function loadArticles(options: ArticleExportOptions): Promise<ArticleLoadR
 }
 
 async function countArticles(options: ArticleExportOptions): Promise<number> {
+  const params: any[] = [options.fakeid, options.createTimeBefore || null];
+  const metricWhere = buildMetricWhereClause(options.metricFilters, params, 'AND');
   const result = await getPool().query(
     `
       SELECT COUNT(*)::int AS count
-      FROM wx_articles
-      WHERE fakeid = $1
-        AND ($2::int IS NULL OR create_time < $2)
+      FROM wx_article_export_rows r
+      WHERE r.fakeid = $1
+        AND ($2::int IS NULL OR r.create_time < $2)
+        ${metricWhere}
     `,
-    [options.fakeid, options.createTimeBefore || null],
+    params,
+  );
+  return Number(result.rows[0]?.count || 0);
+}
+
+async function countArticlesByUrls(options: ArticleExportOptions): Promise<number> {
+  const params: any[] = [options.urls || []];
+  const where = buildMetricWhereClause(options.metricFilters, params);
+  const result = await getPool().query(
+    `
+      WITH input(link, ord) AS (
+        SELECT * FROM unnest($1::text[]) WITH ORDINALITY
+      )
+      SELECT COUNT(*)::int AS count
+      FROM input
+      JOIN wx_article_export_rows r ON r.link = input.link
+      ${where}
+    `,
+    params,
   );
   return Number(result.rows[0]?.count || 0);
 }
 
 function mapLoadedArticle(row: any): LoadedArticle {
+  const article = row.export_data || row.article_data || {};
   return {
-    article: {
-      ...row.data,
-      fakeid: row.fakeid,
-      _status: row.status || '',
-      is_deleted: row.is_deleted,
-      _single: row.single_article || undefined,
-    },
+    article,
     accountName: row.account_name || null,
     metadata: row.metadata || undefined,
     comments: row.comments || undefined,
