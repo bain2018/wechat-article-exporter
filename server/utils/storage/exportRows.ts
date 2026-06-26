@@ -27,6 +27,11 @@ export async function refreshExportRowsByFakeid(fakeid: string, client: Queryabl
   return result.rowCount || 0;
 }
 
+export async function refreshAllExportRows(client: Queryable = getPool()): Promise<number> {
+  const result = await client.query(`${exportRowUpsertSql('TRUE')}`);
+  return result.rowCount || 0;
+}
+
 export async function refreshMissingExportRowsByUrls(urls: string[], client: Queryable = getPool()): Promise<number> {
   const uniqueUrls = [...new Set(urls.filter(Boolean))];
   if (uniqueUrls.length === 0) {
@@ -62,6 +67,33 @@ export async function refreshMissingExportRowsByFakeid(fakeid: string, client: Q
     [fakeid],
   );
   return result.rowCount || 0;
+}
+
+export async function refreshMissingExportRows(client: Queryable = getPool()): Promise<number> {
+  const result = await client.query(`${exportRowUpsertSql('existing.link IS NULL', true)}`);
+  return result.rowCount || 0;
+}
+
+export async function getExportRowsStats(client: Queryable = getPool()) {
+  const result = await client.query(`
+    SELECT
+      (SELECT COUNT(*)::int FROM wx_articles) AS article_count,
+      (SELECT COUNT(*)::int FROM wx_article_export_rows) AS export_row_count,
+      (SELECT COUNT(*)::int FROM wx_metadata) AS metadata_count,
+      (SELECT COUNT(*)::int FROM wx_comments) AS comment_cache_count,
+      (SELECT COUNT(*)::int FROM wx_blob_assets WHERE kind = 'html') AS html_cache_count,
+      (SELECT MAX(updated_at) FROM wx_article_export_rows) AS last_refreshed_at
+  `);
+  const row = result.rows[0] || {};
+  return {
+    articleCount: Number(row.article_count || 0),
+    exportRowCount: Number(row.export_row_count || 0),
+    metadataCount: Number(row.metadata_count || 0),
+    commentCacheCount: Number(row.comment_cache_count || 0),
+    htmlCacheCount: Number(row.html_cache_count || 0),
+    missingExportRowCount: Math.max(Number(row.article_count || 0) - Number(row.export_row_count || 0), 0),
+    lastRefreshedAt: row.last_refreshed_at || null,
+  };
 }
 
 function exportRowUpsertSql(whereClause: string, joinExisting = false): string {

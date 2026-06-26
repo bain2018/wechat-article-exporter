@@ -6,6 +6,7 @@
 
     <div class="h-full overflow-scroll">
       <SettingProxy />
+      <SettingStorage />
       <div class="flex flex-wrap">
         <SettingExport />
         <SettingMisc />
