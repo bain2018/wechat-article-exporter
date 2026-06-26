@@ -1,5 +1,4 @@
 import ExcelJS from 'exceljs';
-import { saveAs } from 'file-saver';
 import { formatItemShowType, formatTimeStamp } from '#shared/utils/helpers';
 import type { AccountManifest } from '~/types/account';
 import type { AppMsgEx } from '~/types/types';
@@ -12,8 +11,8 @@ export type ExcelExportEntity = AppMsgEx &
     _accountName: string | null;
   };
 
-// 导出为 excel 文件
-export async function export2ExcelFile(data: ExcelExportEntity[], filename: string) {
+// 构建 Excel 文件内容
+export async function createExcelBuffer(data: ExcelExportEntity[]) {
   // 创建工作簿和工作表
   const workbook = new ExcelJS.Workbook();
   const worksheet = workbook.addWorksheet('Sheet1');
@@ -64,20 +63,28 @@ export async function export2ExcelFile(data: ExcelExportEntity[], filename: stri
     });
   });
 
+  return workbook.xlsx.writeBuffer();
+}
+
+// 导出为 excel 文件
+export async function export2ExcelFile(data: ExcelExportEntity[], filename: string) {
   // 导出为 Excel 文件
-  const buffer = await workbook.xlsx.writeBuffer();
+  const buffer = await createExcelBuffer(data);
   const blob = new Blob([buffer], { type: 'application/octet-stream' });
+  const { saveAs } = await import('file-saver');
   saveAs(blob, `${filename}.xlsx`);
 }
 
 // 导出为 json 文件
 export async function export2JsonFile(data: ExcelExportEntity[], filename: string) {
   const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
+  const { saveAs } = await import('file-saver');
   saveAs(blob, `${filename}.json`);
 }
 
 // 导出公众号数据
 export async function exportAccountJsonFile(data: AccountManifest, filename: string) {
   const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
+  const { saveAs } = await import('file-saver');
   saveAs(blob, `${filename}.json`);
 }
