@@ -24,13 +24,24 @@ export default defineEventHandler(async event => {
 });
 
 function toDownloadResponse(result: ArticleExportResult): Response {
+  const headers: Record<string, string> = {
+    'Content-Type': result.contentType,
+    'Content-Disposition': contentDisposition(result.filename),
+    'X-Wx-Export-Article-Count': String(result.articleCount),
+    'X-Wx-Export-Missing-Content': String(result.missingContent.length),
+  };
+  if (result.totalCount !== undefined) {
+    headers['X-Wx-Export-Total-Count'] = String(result.totalCount);
+  }
+  if (result.page !== undefined) {
+    headers['X-Wx-Export-Page'] = String(result.page);
+  }
+  if (result.pageSize !== undefined) {
+    headers['X-Wx-Export-Page-Size'] = String(result.pageSize);
+  }
+
   return new Response(typeof result.body === 'string' ? result.body : new Uint8Array(result.body), {
-    headers: {
-      'Content-Type': result.contentType,
-      'Content-Disposition': contentDisposition(result.filename),
-      'X-Wx-Export-Article-Count': String(result.articleCount),
-      'X-Wx-Export-Missing-Content': String(result.missingContent.length),
-    },
+    headers,
   });
 }
 

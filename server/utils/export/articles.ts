@@ -26,6 +26,8 @@ export interface ArticleExportOptions {
   includeComments?: boolean;
   createTimeBefore?: number;
   limit?: number;
+  page?: number;
+  pageSize?: number;
 }
 
 export interface ArticleExportResult {
@@ -33,6 +35,9 @@ export interface ArticleExportResult {
   contentType: string;
   filename: string;
   articleCount: number;
+  totalCount?: number;
+  page?: number;
+  pageSize?: number;
   missingContent: string[];
 }
 
@@ -53,6 +58,13 @@ interface LoadedArticle {
   htmlObjectKey?: string;
 }
 
+interface ArticleLoadResult {
+  articles: LoadedArticle[];
+  totalCount?: number;
+  page?: number;
+  pageSize?: number;
+}
+
 type CommentReplyMap = Map<string, any>;
 
 export function parseArticleExportInput(input: Record<string, any>): ArticleExportOptions {
@@ -66,6 +78,8 @@ export function parseArticleExportInput(input: Record<string, any>): ArticleExpo
     includeComments: booleanValue(input.includeComments ?? input.include_comments),
     createTimeBefore: numberValue(input.createTimeBefore ?? input.create_time_before ?? input.before),
     limit: numberValue(input.limit),
+    page: numberValue(input.page),
+    pageSize: numberValue(input.pageSize ?? input.page_size),
   };
 }
 
@@ -77,7 +91,8 @@ export async function buildArticleExport(options: ArticleExportOptions): Promise
     throw new ArticleExportError(400, 'fakeid 和 urls 至少需要提供一个');
   }
 
-  const articles = await loadArticles(options);
+  const loaded = await loadArticles(options);
+  const articles = loaded.articles;
   if (articles.length === 0) {
     throw new ArticleExportError(404, '没有找到可导出的文章缓存');
   }
@@ -96,6 +111,9 @@ export async function buildArticleExport(options: ArticleExportOptions): Promise
       contentType: 'application/json; charset=utf-8',
       filename: `${filename}.json`,
       articleCount: articles.length,
+      totalCount: loaded.totalCount,
+      page: loaded.page,
+      pageSize: loaded.pageSize,
       missingContent,
     };
   }
@@ -112,16 +130,25 @@ export async function buildArticleExport(options: ArticleExportOptions): Promise
       contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       filename: `${filename}.xlsx`,
       articleCount: articles.length,
+      totalCount: loaded.totalCount,
+      page: loaded.page,
+      pageSize: loaded.pageSize,
       missingContent,
     };
   }
 
-  return buildTextLikeArchive(articles, {
+  const result = await buildTextLikeArchive(articles, {
     format: options.format,
     filename,
     includeComments: options.includeComments ?? options.format === 'html',
     missingContent,
   });
+  return {
+    ...result,
+    totalCount: loaded.totalCount,
+    page: loaded.page,
+    pageSize: loaded.pageSize,
+  };
 }
 
 function normalizeFormat(format: string): ArticleExportFormat {
@@ -132,8 +159,10 @@ function normalizeFormat(format: string): ArticleExportFormat {
   return normalized as ArticleExportFormat;
 }
 
-async function loadArticles(options: ArticleExportOptions): Promise<LoadedArticle[]> {
+async function loadArticles(options: ArticleExportOptions): Promise<ArticleLoadResult> {
+  const pagination = resolvePagination(options);
   if (options.urls && options.urls.length > 0) {
+    const urls = pagination.enabled ? options.urls.slice(pagination.offset, pagination.offset + pagination.limit) : options.urls;
     const result = await getPool().query(
       `
         WITH input(link, ord) AS (
@@ -153,12 +182,17 @@ async function loadArticles(options: ArticleExportOptions): Promise<LoadedArticl
         LEFT JOIN wx_blob_assets html ON html.kind = 'html' AND html.url = a.link
         ORDER BY input.ord
       `,
-      [options.urls],
+      [urls],
     );
-    return result.rows.map(mapLoadedArticle);
+    return {
+      articles: result.rows.map(mapLoadedArticle),
+      totalCount: pagination.enabled ? options.urls.length : undefined,
+      page: pagination.page,
+      pageSize: pagination.pageSize,
+    };
   }
 
-  const limit = clampLimit(options.limit);
+  const totalCount = pagination.enabled ? await countArticles(options) : undefined;
   const result = await getPool().query(
     `
       SELECT
@@ -176,10 +210,29 @@ async function loadArticles(options: ArticleExportOptions): Promise<LoadedArticl
         AND ($2::int IS NULL OR a.create_time < $2)
       ORDER BY a.create_time DESC
       LIMIT $3
+      OFFSET $4
     `,
-    [options.fakeid, options.createTimeBefore || null, limit],
+    [options.fakeid, options.createTimeBefore || null, pagination.limit, pagination.offset],
   );
-  return result.rows.map(mapLoadedArticle);
+  return {
+    articles: result.rows.map(mapLoadedArticle),
+    totalCount,
+    page: pagination.page,
+    pageSize: pagination.pageSize,
+  };
+}
+
+async function countArticles(options: ArticleExportOptions): Promise<number> {
+  const result = await getPool().query(
+    `
+      SELECT COUNT(*)::int AS count
+      FROM wx_articles
+      WHERE fakeid = $1
+        AND ($2::int IS NULL OR create_time < $2)
+    `,
+    [options.fakeid, options.createTimeBefore || null],
+  );
+  return Number(result.rows[0]?.count || 0);
 }
 
 function mapLoadedArticle(row: any): LoadedArticle {
@@ -608,6 +661,43 @@ function articleFileName(article: any, index: number, ext: string): string {
 function safeFilename(input: string): string {
   const safe = filterInvalidFilenameChars(input || '').replace(/^_+|_+$/g, '');
   return safe || 'export';
+}
+
+function resolvePagination(options: ArticleExportOptions) {
+  const enabled = options.page !== undefined || options.pageSize !== undefined;
+  if (!enabled) {
+    return {
+      enabled,
+      limit: clampLimit(options.limit),
+      offset: 0,
+      page: undefined,
+      pageSize: undefined,
+    };
+  }
+
+  const page = clampPage(options.page);
+  const pageSize = clampPageSize(options.pageSize ?? options.limit);
+  return {
+    enabled,
+    limit: pageSize,
+    offset: (page - 1) * pageSize,
+    page,
+    pageSize,
+  };
+}
+
+function clampPage(page?: number): number {
+  if (!page || page <= 0) {
+    return 1;
+  }
+  return Math.floor(page);
+}
+
+function clampPageSize(pageSize?: number): number {
+  if (!pageSize || pageSize <= 0) {
+    return 100;
+  }
+  return Math.min(Math.floor(pageSize), 10000);
 }
 
 function clampLimit(limit?: number): number {

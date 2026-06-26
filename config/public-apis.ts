@@ -353,13 +353,31 @@ export const apis = [
         remark: 'Unix 秒级时间戳，仅 fakeid 批量导出时有效',
       },
       {
-        label: '导出条数',
+        label: '页码',
+        name: 'page',
+        location: 'query',
+        required: false,
+        default: 'N/A',
+        type: 'Int',
+        remark: '从 1 开始；传 page 或 page_size 后启用分页',
+      },
+      {
+        label: '每页条数',
+        name: 'page_size',
+        location: 'query',
+        required: false,
+        default: '100',
+        type: 'Int',
+        remark: '分页模式有效，最大 10000',
+      },
+      {
+        label: '导出条数上限',
         name: 'limit',
         location: 'query',
         required: false,
         default: '10000',
         type: 'Int',
-        remark: '仅 fakeid 批量导出时有效，最大 10000',
+        remark: '未启用分页时的一次性导出上限；分页模式未传 page_size 时可作为每页条数兼容参数',
       },
     ],
     responseSample: [
@@ -388,7 +406,7 @@ export const apis = [
       },
     ],
     remark:
-      '此接口读取 PostgreSQL/MinIO 服务端缓存；远端存储未启用时返回 503。html / txt / markdown 会返回 zip，excel 返回 xlsx。也支持 POST JSON 调用，参数名与 query 一致。',
+      '此接口读取 PostgreSQL/MinIO 服务端缓存；远端存储未启用时返回 503。html / txt / markdown 会返回 zip，excel 返回 xlsx。也支持 POST JSON 调用，参数名与 query 一致。分页响应会通过 X-Wx-Export-Page、X-Wx-Export-Page-Size、X-Wx-Export-Total-Count 返回页码、页大小和总量。',
   },
   {
     name: '查询公众号主体信息 (beta)',
