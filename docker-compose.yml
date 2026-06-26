@@ -30,7 +30,7 @@ services:
       MINIO_BUCKET: wechat-article-exporter
       MINIO_REGION: us-east-1
     ports:
-      - "3101:3000"
+      - "3100:3000"
     volumes:
       - /app/data/wechat:/app/.data
     healthcheck:
