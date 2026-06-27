@@ -54,6 +54,7 @@ export class BaseDownloader {
       maxRetries: options.maxRetries ?? DEFAULT_OPTIONS.MAX_RETRIES,
       cooldownPeriod: options.cooldownPeriod ?? DEFAULT_OPTIONS.COOLDOWN_PERIOD,
       maxFailures: options.maxFailures ?? DEFAULT_OPTIONS.MAX_FAILURES,
+      metadataPersistHtml: options.metadataPersistHtml ?? false,
     };
 
     this.proxyManager = new ProxyManager(proxies, this.options.cooldownPeriod, this.options.maxFailures);

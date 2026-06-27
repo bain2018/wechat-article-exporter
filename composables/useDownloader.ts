@@ -2,7 +2,7 @@ import { formatElapsedTime } from '#shared/utils/helpers';
 import toastFactory from '~/composables/toast';
 import type { Metadata } from '~/store/v2/metadata';
 import { Downloader } from '~/utils/download/Downloader';
-import type { DownloaderStatus } from '~/utils/download/types';
+import type { DownloaderStatus, DownloadOptions } from '~/utils/download/types';
 
 export interface DownloadArticleOptions {
   // 文章内容下载成功回调
@@ -94,7 +94,7 @@ export default (options: Partial<DownloadArticleOptions> = {}) => {
   }
 
   // 抓取文章阅读量、点赞量等元数据
-  async function downloadArticleMetadata(urls: string[]) {
+  async function downloadArticleMetadata(urls: string[], downloadOptions: DownloadOptions = {}) {
     if (urls.length === 0) {
       toast.warning('提示', '请先选择文章');
       return false;
@@ -104,7 +104,8 @@ export default (options: Partial<DownloadArticleOptions> = {}) => {
       loading.value = true;
       cleanupDownloader();
 
-      downloader = new Downloader(urls);
+      const persistMetadataHtml = downloadOptions.metadataPersistHtml === true;
+      downloader = new Downloader(urls, downloadOptions);
       downloader.on('download:progress', (url: string, success: boolean, status: DownloaderStatus) => {
         console.debug(
           `进度: (进行中:${status.pending.length} / 已完成:${status.completed.length} / 已失败:${status.failed.length} / 已删除:${status.deleted.length})`
@@ -114,6 +115,9 @@ export default (options: Partial<DownloadArticleOptions> = {}) => {
       downloader.on('download:metadata', (url: string, metadata: Metadata) => {
         if (typeof options.onMetadata === 'function') {
           options.onMetadata(url, metadata);
+        }
+        if (persistMetadataHtml && typeof options.onContent === 'function') {
+          options.onContent(url);
         }
       });
       downloader.on('download:deleted', (url: string) => {
@@ -204,7 +208,7 @@ export default (options: Partial<DownloadArticleOptions> = {}) => {
       return false;
     }
 
-    if (!(await downloadArticleMetadata(urls)) || stopRequested) {
+    if (!(await downloadArticleMetadata(urls, { metadataPersistHtml: true })) || stopRequested) {
       return false;
     }
     return downloadArticleComment(urls);

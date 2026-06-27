@@ -269,8 +269,8 @@ export class Downloader extends BaseDownloader {
           // 下载成功
           await this.processHtmlMetadata(blob, url);
 
-          // 抓取阅读量时，将带有阅读量的html更新到缓存
-          if (preferences.value.downloadConfig.metadataOverrideContent) {
+          // 抓取留言需要先从 HTML 中解析 commentID；组合抓取时必须持久化本次元数据请求拿到的 HTML。
+          if (preferences.value.downloadConfig.metadataOverrideContent || this.options.metadataPersistHtml) {
             await updateHtmlCache({
               fakeid: article.fakeid,
               url: url,

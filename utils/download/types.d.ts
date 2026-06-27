@@ -19,6 +19,9 @@ export interface DownloadOptions {
   maxRetries?: number;
   cooldownPeriod?: number;
   maxFailures?: number;
+
+  // 抓取元数据时同步持久化 HTML 缓存，供后续留言抓取读取 commentID
+  metadataPersistHtml?: boolean;
 }
 
 // 下载结果
