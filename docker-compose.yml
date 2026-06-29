@@ -21,12 +21,12 @@ services:
       NITRO_KV_BASE: .data/kv
       NUXT_DEBUG_MP_REQUEST: "false"
       STORAGE_DRIVER: postgres-minio
-      DATABASE_URL: postgres://postgres:postgres@postgres:5432/wechat_article_exporter
+      DATABASE_URL: postgres://whoisurdaddy:facai188!@postgres:5432/wechat_article_exporter
       MINIO_ENDPOINT: minio
       MINIO_PORT: 9000
       MINIO_USE_SSL: "false"
-      MINIO_ACCESS_KEY: minioadmin
-      MINIO_SECRET_KEY: minioadmin
+      MINIO_ACCESS_KEY: whoisurdaddy
+      MINIO_SECRET_KEY: facai188!
       MINIO_BUCKET: wechat-article-exporter
       MINIO_REGION: us-east-1
     ports:
@@ -45,19 +45,19 @@ services:
       start_period: 30s
 
   postgres:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     container_name: wechat-article-exporter-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_USER: whoisurdaddy
+      POSTGRES_PASSWORD: facai188!
       POSTGRES_DB: wechat_article_exporter
     ports:
-      - "5433:5432"
+      - "2354:5432"
     volumes:
       - /app/data/postgres:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d wechat_article_exporter"]
+      test: ["CMD-SHELL", "pg_isready -U whoisurdaddy -d wechat_article_exporter"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -68,8 +68,8 @@ services:
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_ROOT_USER: whoisurdaddy
+      MINIO_ROOT_PASSWORD: facai188!
     ports:
       - "9002:9000"
       - "9001:9001"
