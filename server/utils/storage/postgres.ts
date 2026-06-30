@@ -167,6 +167,10 @@ async function initSchema(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_wx_article_export_rows_fakeid_old_like_num
       ON wx_article_export_rows(fakeid, old_like_num DESC, link);
   `);
+  await db.query(`
+    ALTER TABLE wx_blob_assets
+      ADD COLUMN IF NOT EXISTS comment_id TEXT;
+  `);
   await applySchemaComments(db);
 }
 

@@ -363,6 +363,28 @@ export class Downloader extends BaseDownloader {
       this.failed.add(url);
       return;
     }
+    let commentID = cached.commentID;
+    if (!commentID) {
+      const html = await cached.file.text();
+      const [status, extractedCommentID] = validateHTMLContent(html);
+      if (status === 'Success' && extractedCommentID) {
+        commentID = extractedCommentID;
+        try {
+          await updateHtmlCache({
+            ...cached,
+            commentID,
+          });
+        } catch (error) {
+          console.warn(`文章(url: ${url} )的 commentID 回写缓存失败，继续抓取留言:`, error);
+        }
+      }
+    }
+    if (!commentID) {
+      console.warn(`文章(url: ${url} )未解析到 commentID，无法抓取留言内容`);
+      this.pending.delete(url);
+      this.failed.add(url);
+      return;
+    }
     const title = cached.title;
 
     // 下载顶级留言
@@ -375,7 +397,7 @@ export class Downloader extends BaseDownloader {
         const proxy = this.proxyManager.getBestProxy();
 
         try {
-          const response = await this.fetchComments(article.fakeid, cached.commentID!, buffer, proxy, article.appmsgid, article.itemidx);
+          const response = await this.fetchComments(article.fakeid, commentID, buffer, proxy, article.appmsgid, article.itemidx);
           this.proxyManager.recordSuccess(proxy);
 
           if (response.base_resp.ret === 0) {
@@ -386,7 +408,7 @@ export class Downloader extends BaseDownloader {
             continue download_comment;
           } else {
             // 留言下载失败
-            throwException(`文章(url: ${url} )的评论(${cached.commentID})获取失败`);
+            throwException(`文章(url: ${url} )的评论(${commentID})获取失败`);
           }
         } catch (error) {
           await this.handleDownloadFailure(proxy, url, attempt, error);
@@ -418,7 +440,7 @@ export class Downloader extends BaseDownloader {
         try {
           const response = await this.fetchCommentReply(
             article.fakeid,
-            cached.commentID!,
+            commentID,
             comment.content_id,
             comment.reply_new.max_reply_id,
             proxy,
@@ -439,7 +461,7 @@ export class Downloader extends BaseDownloader {
             continue download_comment_reply;
           } else {
             // 留言下载失败
-            throwException(`文章(url: ${url} )的评论回复(${cached.commentID})获取失败`);
+            throwException(`文章(url: ${url} )的评论回复(${commentID})获取失败`);
           }
         } catch (error) {
           await this.handleDownloadFailure(proxy, url, attempt, error);
