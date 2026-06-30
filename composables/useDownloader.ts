@@ -210,11 +210,61 @@ export default (options: Partial<DownloadArticleOptions> = {}) => {
       return false;
     }
 
-    const metadataStatus = await downloadArticleMetadata(urls, { metadataPersistHtml: true });
-    if (!metadataStatus || stopRequested) {
+    try {
+      loading.value = true;
+      cleanupDownloader();
+
+      downloader = new Downloader(urls, { metadataPersistHtml: true });
+      downloader.on('download:progress', (url: string, success: boolean, status: DownloaderStatus) => {
+        console.debug(
+          `进度: (进行中:${status.pending.length} / 已完成:${status.completed.length} / 已失败:${status.failed.length} / 已删除:${status.deleted.length})`
+        );
+        completed_count.value = status.completed.length;
+        if (success && typeof options.onComment === 'function') {
+          options.onComment(url);
+        }
+      });
+      downloader.on('download:metadata', (url: string, metadata: Metadata) => {
+        if (typeof options.onMetadata === 'function') {
+          options.onMetadata(url, metadata);
+        }
+        if (typeof options.onContent === 'function') {
+          options.onContent(url);
+        }
+      });
+      downloader.on('download:deleted', (url: string) => {
+        if (typeof options.onDelete === 'function') {
+          options.onDelete(url);
+        }
+      });
+      downloader.on('download:exception', (url: string, msg: string) => {
+        if (typeof options.onStatusChange === 'function') {
+          options.onStatusChange(url, msg);
+        }
+      });
+      downloader.on('download:begin', () => {
+        console.debug('开始抓取【留言内容 + 评论数】...');
+        completed_count.value = 0;
+        total_count.value = urls.length;
+      });
+      downloader.on('download:finish', (seconds: number, status: DownloaderStatus) => {
+        console.debug('耗时:', formatElapsedTime(seconds));
+        toast.success(
+          '【留言内容 + 评论数】抓取完成',
+          `本次抓取耗时 ${formatElapsedTime(seconds)}, 成功:${status.completed.length}, 失败:${status.failed.length}, 检测到已被删除:${status.deleted.length}`
+        );
+      });
+
+      await downloader.startDownload('full');
+      return true;
+    } catch (error) {
+      console.error('【留言内容 + 评论数】抓取失败:', error);
+      alert((error as Error).message);
       return false;
+    } finally {
+      loading.value = false;
+      cleanupDownloader();
     }
-    return downloadArticleComment(metadataStatus.completed);
   }
 
   // 修复单篇文章fakeid

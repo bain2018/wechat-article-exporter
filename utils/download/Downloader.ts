@@ -14,7 +14,7 @@ import type { Preferences } from '~/types/preferences';
 import { BaseDownloader } from '~/utils/download/BaseDownloader';
 import type { DownloadOptions } from './types';
 
-type DownloadType = 'html' | 'metadata' | 'comments' | 'fakeid';
+type DownloadType = 'html' | 'metadata' | 'comments' | 'full' | 'fakeid';
 
 const credentials = useLocalStorage<ParsedCredential[]>('auto-detect-credentials:credentials', []);
 const preferences: Ref<Preferences> = usePreferences() as unknown as Ref<Preferences>;
@@ -39,7 +39,7 @@ export class Downloader extends BaseDownloader {
     this.isRunning = true;
     const start = Date.now();
     this.emit('download:begin');
-    if (['metadata', 'comments'].includes(this.downloadType) && this.options.concurrency > 2) {
+    if (['metadata', 'comments', 'full'].includes(this.downloadType) && this.options.concurrency > 2) {
       // 需要Credential爬取的数据，最大并发量设置为2
       this.options.concurrency = 2;
     }
@@ -102,9 +102,22 @@ export class Downloader extends BaseDownloader {
       return this.downloadMetadataTask(url);
     } else if (this.downloadType === 'comments') {
       return this.downloadCommentsTask(url);
+    } else if (this.downloadType === 'full') {
+      return this.downloadFullTask(url);
     } else if (this.downloadType === 'fakeid') {
       return this.fixSingleFakeidTask(url);
     }
+  }
+
+  // 单篇文章内按顺序抓取互动指标和留言内容
+  private async downloadFullTask(url: string): Promise<void> {
+    await this.downloadMetadataTask(url);
+    if (this.isStopping || this.failed.has(url) || this.deleted.has(url) || !this.completed.has(url)) {
+      return;
+    }
+
+    this.completed.delete(url);
+    await this.downloadCommentsTask(url);
   }
 
   // 修复单篇文章下载时的虚假fakeid
