@@ -266,9 +266,6 @@ export class Downloader extends BaseDownloader {
         const html = await blob.text();
         const [status, commentID] = validateHTMLContent(html);
         if (status === 'Success') {
-          // 下载成功
-          await this.processHtmlMetadata(blob, url);
-
           // 抓取留言需要先从 HTML 中解析 commentID；组合抓取时必须持久化本次元数据请求拿到的 HTML。
           if (preferences.value.downloadConfig.metadataOverrideContent || this.options.metadataPersistHtml) {
             await updateHtmlCache({
@@ -279,6 +276,8 @@ export class Downloader extends BaseDownloader {
               commentID,
             });
           }
+          // 下载成功
+          await this.processHtmlMetadata(blob, url);
           this.pending.delete(url);
           this.completed.add(url);
           this.proxyManager.recordSuccess(proxy);
@@ -359,6 +358,7 @@ export class Downloader extends BaseDownloader {
     const cached = await getHtmlCache(url);
     if (!cached) {
       // 文章还未下载，不能下载留言
+      console.warn(`文章(url: ${url} )未找到 HTML 缓存，无法抓取留言内容`);
       this.pending.delete(url);
       this.failed.add(url);
       return;

@@ -105,6 +105,7 @@ export default (options: Partial<DownloadArticleOptions> = {}) => {
       cleanupDownloader();
 
       const persistMetadataHtml = downloadOptions.metadataPersistHtml === true;
+      let finalStatus: DownloaderStatus | null = null;
       downloader = new Downloader(urls, downloadOptions);
       downloader.on('download:progress', (url: string, success: boolean, status: DownloaderStatus) => {
         console.debug(
@@ -136,6 +137,7 @@ export default (options: Partial<DownloadArticleOptions> = {}) => {
         total_count.value = urls.length;
       });
       downloader.on('download:finish', (seconds: number, status: DownloaderStatus) => {
+        finalStatus = status;
         console.debug('耗时:', formatElapsedTime(seconds));
         toast.success(
           '【阅读量】抓取完成',
@@ -144,7 +146,7 @@ export default (options: Partial<DownloadArticleOptions> = {}) => {
       });
 
       await downloader.startDownload('metadata');
-      return true;
+      return finalStatus && finalStatus.completed.length > 0 ? finalStatus : false;
     } catch (error) {
       console.error('【阅读量】抓取失败:', error);
       alert((error as Error).message);
@@ -208,10 +210,11 @@ export default (options: Partial<DownloadArticleOptions> = {}) => {
       return false;
     }
 
-    if (!(await downloadArticleMetadata(urls, { metadataPersistHtml: true })) || stopRequested) {
+    const metadataStatus = await downloadArticleMetadata(urls, { metadataPersistHtml: true });
+    if (!metadataStatus || stopRequested) {
       return false;
     }
-    return downloadArticleComment(urls);
+    return downloadArticleComment(metadataStatus.completed);
   }
 
   // 修复单篇文章fakeid
