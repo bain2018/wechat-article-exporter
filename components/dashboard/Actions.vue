@@ -30,6 +30,24 @@ const credentialBadgeText = computed(() => {
   return count > 9 ? '+' : `${count}`;
 });
 const isCredentialActive = computed(() => credentialState.value === 'active');
+
+const appAuthEnabled = ref(false);
+async function logout() {
+  await $fetch('/api/auth/logout', {
+    method: 'POST',
+    retry: 0,
+  });
+  await navigateTo('/login');
+}
+
+onMounted(async () => {
+  try {
+    const status = await $fetch<{ enabled: boolean }>('/api/auth/me', { retry: 0 });
+    appAuthEnabled.value = status.enabled;
+  } catch {
+    appAuthEnabled.value = true;
+  }
+});
 </script>
 
 <template>
@@ -110,6 +128,17 @@ const isCredentialActive = computed(() => credentialState.value === 'active');
           @click="gotoLink('https://github.com/wechat-article/wechat-article-exporter')"
           name="i-lucide:github"
           class="size-7 text-zinc-400 hover:text-blue-500 cursor-pointer transition-colors"
+        />
+      </UTooltip>
+    </li>
+
+    <!-- 退出登录 -->
+    <li v-if="appAuthEnabled">
+      <UTooltip text="退出登录">
+        <UIcon
+          name="i-lucide:log-out"
+          @click="logout"
+          class="size-7 text-zinc-400 hover:text-rose-500 cursor-pointer transition-colors"
         />
       </UTooltip>
     </li>

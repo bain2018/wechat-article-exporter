@@ -36,6 +36,29 @@
 
 该工具的使用教程已移至 [文档站点](https://docs.mptext.top)。
 
+### 私有化访问登录
+
+私有化部署到公网时建议开启应用登录认证，避免任何人直接访问页面或服务端 API：
+
+```env
+APP_AUTH_ENABLED=true
+APP_AUTH_USERNAME=admin
+APP_AUTH_PASSWORD=
+APP_AUTH_PASSWORD_SHA256=
+APP_AUTH_SECRET=
+APP_AUTH_SESSION_TTL_SECONDS=604800
+APP_AUTH_COOKIE_SECURE=false
+```
+
+`APP_AUTH_PASSWORD` 和 `APP_AUTH_PASSWORD_SHA256` 二选一即可。推荐只配置哈希：
+
+```bash
+printf '%s' 'your-password' | shasum -a 256 | awk '{print $1}'
+openssl rand -base64 48
+```
+
+Docker compose 默认启用认证；如果未配置账号、密码和 `APP_AUTH_SECRET`，应用会进入登录页并提示认证未配置，不会放开访问。
+
 ### PostgreSQL + MinIO 持久化缓存
 
 默认仍使用浏览器 IndexedDB。私有化长期运行时可以开启服务端持久化缓存：

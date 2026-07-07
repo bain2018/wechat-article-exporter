@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import * as cheerio from 'cheerio';
 import { isDev } from '~/config';
+import { parseIpWordingConfig, parseWechatAssignment } from '~/utils/wechat-script-data';
 
 interface AboutBizQuery {
   fakeid: string;
@@ -94,25 +95,13 @@ function extractInfo(rawHTML: string) {
     $itemInfo = $itemInfo.next('.item-info');
   }
 
-  const scriptCodeMatchResult = rawHTML.match(/(?<code>var cgiData = .+)seajs\.use/s);
-  if (scriptCodeMatchResult && scriptCodeMatchResult.groups && scriptCodeMatchResult.groups.code) {
-    const scriptCode = scriptCodeMatchResult.groups.code;
-    const window: Record<string, any> = {
-      cgiData: {
-        auth_3rd_list: [],
-      },
-    };
-    try {
-      eval(scriptCode);
-    } catch (e) {
-      console.error('eval execute js code fatal:', e);
-    }
-    if (window.ip_wording) {
-      result.ip_wording = window.ip_wording;
-    }
-    if (window.cgiData.auth_3rd_list) {
-      result.auth_3rd_list = window.cgiData.auth_3rd_list;
-    }
+  const ipWording = parseIpWordingConfig(rawHTML);
+  if (ipWording) {
+    result.ip_wording = ipWording;
+  }
+  const cgiData = parseWechatAssignment<{ auth_3rd_list?: unknown[] }>(rawHTML, 'var cgiData');
+  if (cgiData?.auth_3rd_list) {
+    result.auth_3rd_list = cgiData.auth_3rd_list;
   }
 
   return result;

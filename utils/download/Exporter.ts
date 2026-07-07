@@ -15,6 +15,12 @@ import type { Preferences } from '~/types/preferences';
 import { getArticleComments, renderComments } from '~/utils/comment';
 import { BaseDownloader } from '~/utils/download/BaseDownloader';
 import { type ExcelExportEntity, export2ExcelFile, export2JsonFile } from '~/utils/exporter';
+import {
+  parseIpWordingConfig,
+  parsePicturePageInfoList,
+  parseQmtplSsrData,
+  parseWechatFallbackStringAssignment,
+} from '~/utils/wechat-script-data';
 import type { DownloadOptions } from './types';
 
 // 导出类型
@@ -453,7 +459,7 @@ export class Exporter extends BaseDownloader {
 
     await this.processFileExportQueue(
       this.urls,
-      async (url) => {
+      async url => {
         const cached = await getHtmlCache(url);
         if (!cached) {
           console.warn(`文章(url: ${url} )的 html 还未下载，不能导出`);
@@ -505,7 +511,7 @@ export class Exporter extends BaseDownloader {
         const pdfBlob = await response.blob();
         await this.writeFile(filename + '.pdf', pdfBlob);
       },
-      { concurrency: 2, progressEvent: 'export:write:progress' },
+      { concurrency: 2, progressEvent: 'export:write:progress' }
     );
     await sleep(100);
   }
@@ -644,12 +650,9 @@ export class Exporter extends BaseDownloader {
     }
     const ipWrp = document.getElementById('js_ip_wording_wrp')!;
     const ipWording = document.getElementById('js_ip_wording')!;
-    const ipWordingMatchResult = html.match(/window\.ip_wording = (?<data>{\s+countryName: '[^']+',[^}]+})/s);
-    if (ipWrp && ipWording && ipWordingMatchResult && ipWordingMatchResult.groups && ipWordingMatchResult.groups.data) {
-      const json = ipWordingMatchResult.groups.data;
-      // eslint-disable-next-line no-eval
-      eval('window.ip_wording = ' + json);
-      const ipWordingDisplay = getIpWoridng((window as any).ip_wording);
+    const ipWordingConfig = parseIpWordingConfig(html);
+    if (ipWrp && ipWording && ipWordingConfig) {
+      const ipWordingDisplay = getIpWoridng(ipWordingConfig);
       if (ipWordingDisplay !== '') {
         ipWording.innerHTML = ipWordingDisplay;
         ipWrp.style.display = 'inline-block';
@@ -740,12 +743,9 @@ export class Exporter extends BaseDownloader {
       bodyCls += ' page_share_text';
 
       // 顶部作者栏
-      const qmtplTextMatchResult = html.match(/(?<code>window\.__QMTPL_SSR_DATA__\s*=\s*\{.+?};)/s);
-      if (qmtplTextMatchResult && qmtplTextMatchResult.groups && qmtplTextMatchResult.groups.code) {
-        const code = qmtplTextMatchResult.groups.code;
-        // eslint-disable-next-line no-eval
-        eval(code);
-        const data = (window as any).__QMTPL_SSR_DATA__;
+      const textQmtplData = parseQmtplSsrData(html);
+      if (textQmtplData) {
+        const data = textQmtplData;
         if (data && typeof data.title === 'string' && !$js_text_desc.innerHTML.trim()) {
           let text = data.title as string;
           text = text.replace(/\r/g, '').replace(/\n/g, '<br>');
@@ -756,28 +756,9 @@ export class Exporter extends BaseDownloader {
 
       // 正文内容
       if (!$js_text_desc.innerHTML.trim()) {
-        const textContentMatch = html.match(
-          /var\s+TextContentNoEncode\s*=\s*window\.a_value_which_never_exists\s*\|\|\s*(?<value>'[^']*')/s
-        );
-        const contentMatch = html.match(
-          /var\s+ContentNoEncode\s*=\s*window\.a_value_which_never_exists\s*\|\|\s*(?<value>'[^']*')/s
-        );
-
-        let desc: string | null = null;
-        const assignFromMatch = (match: RegExpMatchArray | null, key: string) => {
-          if (match && match.groups && match.groups.value) {
-            const code = `window.${key} = ${match.groups.value}`;
-            // eslint-disable-next-line no-eval
-            eval(code);
-            // @ts-ignore
-            return (window as any)[key] as string;
-          }
-          return null;
-        };
-
-        desc = assignFromMatch(textContentMatch, '__WX_TEXT_NO_ENCODE__');
+        let desc = parseWechatFallbackStringAssignment(html, 'TextContentNoEncode');
         if (!desc) {
-          desc = assignFromMatch(contentMatch, '__WX_CONTENT_NO_ENCODE__');
+          desc = parseWechatFallbackStringAssignment(html, 'ContentNoEncode');
         }
 
         if (desc) {
@@ -834,27 +815,24 @@ export class Exporter extends BaseDownloader {
         return str;
       }
 
-      const qmtplMatchResult = html.match(/(?<code>window\.__QMTPL_SSR_DATA__\s*=\s*\{.+?)<\/script>/s);
-      if (qmtplMatchResult && qmtplMatchResult.groups && qmtplMatchResult.groups.code) {
-        const code = qmtplMatchResult.groups.code;
-        eval(code);
-        const data = (window as any).__QMTPL_SSR_DATA__;
+      const imageQmtplData = parseQmtplSsrData(html);
+      if (imageQmtplData && typeof imageQmtplData.desc === 'string') {
+        const data = imageQmtplData;
         let desc = data.desc.replace(/\r/g, '').replace(/\n/g, '<br>').replace(/\s/g, '&nbsp;');
         desc = decode_html(desc, false);
         $js_image_desc.innerHTML = desc;
 
         $jsArticleContent.querySelector('#js_top_profile')!.classList.remove('profile_area_hide');
       }
-      const pictureMatchResult = html.match(/(?<code>window\.picture_page_info_list\s*=.+\.slice\(0,\s*20\);)/s);
-      if (pictureMatchResult && pictureMatchResult.groups && pictureMatchResult.groups.code) {
-        const code = pictureMatchResult.groups.code;
-        eval(code);
-        const picture_page_info_list = (window as any).picture_page_info_list;
+      const picture_page_info_list = parsePicturePageInfoList(html);
+      if (picture_page_info_list.length > 0) {
         const containerEl = $jsArticleContent.querySelector('#js_share_content_page_hd')!;
         let innerHTML =
           '<div style="display: flex;flex-direction: column;align-items: center;gap: 10px;padding-block: 20px;">';
         for (const picture of picture_page_info_list) {
-          innerHTML += `<img src="${picture.cdn_url}" alt="" style="display: block;border: 1px solid gray;border-radius: 5px;max-width: 90%;" onclick="window.open(this.src, '_blank', 'popup')" />`;
+          if (picture.cdn_url) {
+            innerHTML += `<img src="${picture.cdn_url}" alt="" style="display: block;border: 1px solid gray;border-radius: 5px;max-width: 90%;" onclick="window.open(this.src, '_blank', 'popup')" />`;
+          }
         }
         innerHTML += '</div>';
         containerEl.innerHTML = innerHTML;
