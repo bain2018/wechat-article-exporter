@@ -43,21 +43,12 @@
 ```env
 APP_AUTH_ENABLED=true
 APP_AUTH_USERNAME=admin
-APP_AUTH_PASSWORD=
-APP_AUTH_PASSWORD_SHA256=
-APP_AUTH_SECRET=
+APP_AUTH_PASSWORD=change-me
 APP_AUTH_SESSION_TTL_SECONDS=604800
 APP_AUTH_COOKIE_SECURE=false
 ```
 
-`APP_AUTH_PASSWORD` 和 `APP_AUTH_PASSWORD_SHA256` 二选一即可。推荐只配置哈希：
-
-```bash
-printf '%s' 'your-password' | shasum -a 256 | awk '{print $1}'
-openssl rand -base64 48
-```
-
-Docker compose 默认启用认证；如果未配置账号、密码和 `APP_AUTH_SECRET`，应用会进入登录页并提示认证未配置，不会放开访问。
+Docker compose 默认启用认证；如果未配置账号或密码，应用会进入登录页并提示认证未配置，不会放开访问。
 
 ### PostgreSQL + MinIO 持久化缓存
 

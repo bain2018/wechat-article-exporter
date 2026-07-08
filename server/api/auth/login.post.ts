@@ -22,8 +22,7 @@ export default defineEventHandler(async event => {
     throw createError({
       statusCode: 503,
       statusMessage: 'App auth is not configured',
-      message:
-        '应用登录认证未配置，请设置 APP_AUTH_USERNAME、APP_AUTH_PASSWORD 或 APP_AUTH_PASSWORD_SHA256、APP_AUTH_SECRET',
+      message: '应用登录认证未配置，请设置 APP_AUTH_USERNAME 和 APP_AUTH_PASSWORD',
     });
   }
 

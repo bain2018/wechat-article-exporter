@@ -75,7 +75,7 @@ onMounted(() => {
         color="red"
         variant="soft"
         title="认证未配置"
-        description="请在服务端配置 APP_AUTH_USERNAME、APP_AUTH_PASSWORD 或 APP_AUTH_PASSWORD_SHA256、APP_AUTH_SECRET 后重启应用。"
+        description="请在服务端配置 APP_AUTH_USERNAME 和 APP_AUTH_PASSWORD 后重建 app 容器。"
         class="mb-4"
       />
 

@@ -14,7 +14,6 @@ interface AppAuthConfig {
   configured: boolean;
   username: string;
   password: string;
-  passwordSha256: string;
   secret: string;
   sessionTtlSeconds: number;
   cookieSecure: boolean;
@@ -59,6 +58,10 @@ function sha256(input: string): string {
   return createHash('sha256').update(input).digest('hex');
 }
 
+function deriveSessionSecret(username: string, password: string): string {
+  return sha256(`wechat-article-exporter:app-auth:${username}:${password}`);
+}
+
 function timingSafeStringEqual(left: string, right: string): boolean {
   const leftBuffer = Buffer.from(left);
   const rightBuffer = Buffer.from(right);
@@ -73,16 +76,14 @@ export function getAppAuthConfig(): AppAuthConfig {
   const enabled = parseBoolean(process.env.APP_AUTH_ENABLED, process.env.NODE_ENV === 'production');
   const username = (process.env.APP_AUTH_USERNAME || '').trim();
   const password = process.env.APP_AUTH_PASSWORD || '';
-  const passwordSha256 = (process.env.APP_AUTH_PASSWORD_SHA256 || '').trim().toLowerCase();
-  const secret = process.env.APP_AUTH_SECRET || '';
+  const configured = Boolean(username && password);
 
   return {
     enabled,
-    configured: Boolean(username && secret && (password || passwordSha256)),
+    configured,
     username,
     password,
-    passwordSha256,
-    secret,
+    secret: configured ? deriveSessionSecret(username, password) : '',
     sessionTtlSeconds: parseSessionTtl(process.env.APP_AUTH_SESSION_TTL_SECONDS),
     cookieSecure: parseBoolean(process.env.APP_AUTH_COOKIE_SECURE, false),
   };
@@ -104,9 +105,6 @@ export function verifyAppAuthPassword(username: string, password: string): boole
   }
   if (!timingSafeStringEqual(username, config.username)) {
     return false;
-  }
-  if (config.passwordSha256) {
-    return timingSafeStringEqual(sha256(password), config.passwordSha256);
   }
 
   return timingSafeStringEqual(password, config.password);
