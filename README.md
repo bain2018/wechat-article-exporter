@@ -50,6 +50,21 @@ APP_AUTH_COOKIE_SECURE=false
 
 Docker compose 默认启用认证；如果未配置账号或密码，应用会进入登录页并提示认证未配置，不会放开访问。
 
+### Credentials 服务远程访问
+
+评论、阅读量等能力依赖浏览器直接连接 Credentials 采集服务。公网部署时，不能让前端继续连接 `127.0.0.1`，否则远程浏览器会访问用户自己电脑的本地端口。
+
+```env
+# 默认自动判断：localhost / 127.0.0.1 / 内网 IP 访问时走本机服务；公网域名访问时走这个 host。
+NUXT_PUBLIC_CREDENTIAL_PUBLIC_HOST=http://home.mohe.ai
+
+# 如果你的 Credentials 服务没有和上面的 host 复用同一入口，可以强制指定完整地址：
+#NUXT_PUBLIC_CREDENTIAL_API_HOST=https://home.mohe.ai:65000
+#NUXT_PUBLIC_CREDENTIAL_WS_URL=wss://home.mohe.ai:65001
+```
+
+如果通过反向代理收敛端口，也可以把强制地址配置成类似 `https://home.mohe.ai/wxdown-api` 和 `wss://home.mohe.ai/wxdown-ws`。这两个地址必须能被访问页面的浏览器直接访问。
+
 ### PostgreSQL + MinIO 持久化缓存
 
 默认仍使用浏览器 IndexedDB。私有化长期运行时可以开启服务端持久化缓存：

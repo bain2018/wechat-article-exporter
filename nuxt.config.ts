@@ -9,6 +9,9 @@ export default defineNuxtConfig({
   runtimeConfig: {
     public: {
       aggridLicense: process.env.NUXT_AGGRID_LICENSE,
+      credentialPublicHost: process.env.NUXT_PUBLIC_CREDENTIAL_PUBLIC_HOST || 'http://home.mohe.ai',
+      credentialApiHost: process.env.NUXT_PUBLIC_CREDENTIAL_API_HOST || '',
+      credentialWsUrl: process.env.NUXT_PUBLIC_CREDENTIAL_WS_URL || '',
       sentry: {
         dsn: process.env.NUXT_SENTRY_DSN,
       },

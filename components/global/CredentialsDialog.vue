@@ -24,15 +24,14 @@
                   <UIcon name="i-lucide:arrow-up-right" class="size-5" />
                 </UButton>
               </p>
+              <UInput
+                color="gray"
+                type="url"
+                v-model="wsURL"
+                :disabled="monitoring || wsMonitoring"
+                placeholder="请输入 ws 监听地址"
+              />
               <div class="flex justify-between items-center gap-3">
-                <UInput
-                  class="flex-1"
-                  color="gray"
-                  type="url"
-                  v-model="wsURL"
-                  :disabled="monitoring || wsMonitoring"
-                  placeholder="请输入 ws 监听地址"
-                />
                 <UButton
                   v-if="!wsMonitoring"
                   :disabled="!wsURL || monitoring"
@@ -67,6 +66,14 @@
                   />
                 </p>
               </div>
+              <UInput
+                class="mb-3"
+                color="gray"
+                type="url"
+                v-model="credentialApiHost"
+                :disabled="authorized || monitoring"
+                placeholder="请输入 HTTP API 地址"
+              />
               <div class="flex justify-between items-center gap-3">
                 <UInput
                   class="flex-1"
@@ -79,7 +86,7 @@
                   class="px-5"
                   color="blue"
                   :loading="authorizeBtnLoading"
-                  :disabled="!apiKey || authorized || wsMonitoring || monitoring"
+                  :disabled="!apiKey || !credentialApiHost || authorized || wsMonitoring || monitoring"
                   @click="authorize"
                   >认证</UButton
                 >
@@ -176,6 +183,10 @@ const tabs = [
 ];
 
 const { checkLogin } = useLoginCheck();
+const runtimeConfig = useRuntimeConfig();
+
+const CREDENTIAL_LOCAL_WS_URL = 'wss://127.0.0.1:65001';
+const CREDENTIAL_PUBLIC_HOST = 'http://home.mohe.ai';
 
 const credentials = useLocalStorage<ParsedCredential[]>('auto-detect-credentials:credentials', []);
 for (const item of credentials.value) {
@@ -329,11 +340,113 @@ const apiKey = ref(localStorage.getItem('auto-detect-credentials:apikey') as str
 const authorizeBtnLoading = ref(false);
 const authorized = ref(false);
 
+function normalizeBaseURL(url: string) {
+  return url.trim().replace(/\/+$/, '');
+}
+
+function isPrivateIPv4(hostname: string) {
+  const match = hostname.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (!match) {
+    return false;
+  }
+
+  const parts = match.slice(1).map(Number);
+  if (parts.some(part => part < 0 || part > 255)) {
+    return false;
+  }
+
+  const [first, second] = parts;
+  return (
+    first === 10 ||
+    first === 127 ||
+    (first === 172 && second >= 16 && second <= 31) ||
+    (first === 192 && second === 168) ||
+    (first === 169 && second === 254)
+  );
+}
+
+function isLocalAccessHost(hostname: string) {
+  const normalized = hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  return (
+    normalized === 'localhost' || normalized.endsWith('.localhost') || normalized === '::1' || isPrivateIPv4(normalized)
+  );
+}
+
+function isLocalEndpointURL(url: string) {
+  try {
+    return isLocalAccessHost(new URL(url).hostname);
+  } catch {
+    return false;
+  }
+}
+
+function toWebSocketURL(url: string) {
+  try {
+    const parsed = new URL(url);
+    parsed.protocol = parsed.protocol === 'https:' ? 'wss:' : 'ws:';
+    return normalizeBaseURL(parsed.toString());
+  } catch {
+    if (url.startsWith('https://')) {
+      return normalizeBaseURL(url.replace(/^https:\/\//, 'wss://'));
+    }
+    return normalizeBaseURL(url.replace(/^http:\/\//, 'ws://'));
+  }
+}
+
+const localCredentialAccess = import.meta.client ? isLocalAccessHost(window.location.hostname) : true;
+const credentialPublicHost = normalizeBaseURL(runtimeConfig.public.credentialPublicHost || CREDENTIAL_PUBLIC_HOST);
+const credentialPublicWsURL = toWebSocketURL(credentialPublicHost);
+const defaultCredentialApiHost = resolveCredentialEndpoint(
+  runtimeConfig.public.credentialApiHost,
+  localCredentialAccess ? CREDENTIAL_API_HOST : credentialPublicHost
+);
+const defaultCredentialWsURL = resolveCredentialEndpoint(
+  runtimeConfig.public.credentialWsUrl,
+  localCredentialAccess ? CREDENTIAL_LOCAL_WS_URL : credentialPublicWsURL
+);
+const credentialApiHost = useLocalStorage<string>('auto-detect-credentials:api-host', defaultCredentialApiHost);
+
+function resolveCredentialEndpoint(configured: unknown, fallback: string) {
+  if (typeof configured !== 'string') {
+    return fallback;
+  }
+
+  const endpoint = normalizeBaseURL(configured);
+  if (!endpoint) {
+    return fallback;
+  }
+
+  if (!localCredentialAccess && isLocalEndpointURL(endpoint)) {
+    return fallback;
+  }
+
+  return endpoint;
+}
+
+function shouldResetStoredEndpoint(value: string, oppositeDefault: string) {
+  const endpoint = normalizeBaseURL(value || '');
+  if (!endpoint) {
+    return true;
+  }
+
+  if (!localCredentialAccess && isLocalEndpointURL(endpoint)) {
+    return true;
+  }
+
+  return endpoint === normalizeBaseURL(oppositeDefault);
+}
+
+if (
+  shouldResetStoredEndpoint(credentialApiHost.value, localCredentialAccess ? credentialPublicHost : CREDENTIAL_API_HOST)
+) {
+  credentialApiHost.value = defaultCredentialApiHost;
+}
+
 // 认证
 async function authorize() {
   try {
     authorizeBtnLoading.value = true;
-    const response = await fetch(`${CREDENTIAL_API_HOST}/authorize`, {
+    const response = await fetch(`${normalizeBaseURL(credentialApiHost.value)}/authorize`, {
       method: 'GET',
       headers: {
         Authorization: apiKey.value,
@@ -364,7 +477,7 @@ async function authorize() {
 async function fetchCredentials() {
   let result: Credential[] = [];
   try {
-    const response = await fetch(`${CREDENTIAL_API_HOST}/credentials`, {
+    const response = await fetch(`${normalizeBaseURL(credentialApiHost.value)}/credentials`, {
       method: 'GET',
       headers: {
         Authorization: apiKey.value,
@@ -427,13 +540,16 @@ async function fetchCredentials() {
   credentials.value = _credentials.sort((a, b) => b.timestamp - a.timestamp);
 }
 
-const wsURL = ref('wss://127.0.0.1:65001');
+const wsURL = useLocalStorage<string>('auto-detect-credentials:ws-url', defaultCredentialWsURL);
+if (shouldResetStoredEndpoint(wsURL.value, localCredentialAccess ? credentialPublicWsURL : CREDENTIAL_LOCAL_WS_URL)) {
+  wsURL.value = defaultCredentialWsURL;
+}
 const wsMonitoring = ref(false);
 let _ws: WebSocket | null = null;
 
 // 启动监听服务
 async function startListenService(isManual = false) {
-  const url = wsURL.value.trim();
+  const url = normalizeBaseURL(wsURL.value);
   if (!url) {
     return;
   }
