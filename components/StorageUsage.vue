@@ -1,28 +1,53 @@
 <script setup lang="ts">
-const usage = ref('');
+const usage = ref('计算中');
+
+function formatBytes(bytes: number) {
+  if (bytes < 1000) {
+    return `${bytes} B`;
+  }
+  if (bytes < 1000 ** 2) {
+    return `${(bytes / 1000).toFixed(0)} kB`;
+  }
+  if (bytes < 1000 ** 3) {
+    return `${(bytes / 1000 ** 2).toFixed(1)} M`;
+  }
+  return `${(bytes / 1000 ** 3).toFixed(1)} G`;
+}
+
+function canEstimateStorage() {
+  return typeof navigator !== 'undefined' && typeof navigator.storage?.estimate === 'function';
+}
 
 async function init() {
-  const storageUsage = await navigator.storage.estimate();
-  const bytes = storageUsage.usage!;
-  if (bytes < 1000) {
-    usage.value = `${bytes} B`;
-  } else if (bytes < 1000 ** 2) {
-    usage.value = `${(bytes / 1000).toFixed(0)} kB`;
-  } else if (bytes < 1000 ** 3) {
-    usage.value = `${(bytes / 1000 ** 2).toFixed(1)} M`;
-  } else {
-    usage.value = `${(bytes / 1000 ** 3).toFixed(1)} G`;
+  if (!canEstimateStorage()) {
+    usage.value = '暂不可用';
+    return;
+  }
+
+  try {
+    const storageUsage = await navigator.storage.estimate();
+    usage.value = formatBytes(storageUsage.usage ?? 0);
+  } catch (error) {
+    console.warn('Failed to estimate storage usage', error);
+    usage.value = '暂不可用';
   }
 }
 
-let timer: number;
+let timer: number | null = null;
 onMounted(() => {
+  init();
+  if (!canEstimateStorage()) {
+    return;
+  }
+
   timer = window.setInterval(() => {
     init();
   }, 1000);
 });
 onUnmounted(() => {
-  window.clearInterval(timer);
+  if (timer !== null) {
+    window.clearInterval(timer);
+  }
 });
 </script>
 
