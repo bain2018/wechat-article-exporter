@@ -1,6 +1,6 @@
 import dayjs from 'dayjs';
-import { request } from '#shared/utils/request';
-import { getCookieFromResponse, getCookiesFromRequest } from '~/server/utils/CookieStore';
+import { cookieStore, getCookieFromResponse, getCookiesFromRequest } from '~/server/utils/CookieStore';
+import { getMpAccountInfo } from '~/server/utils/mp-account-info';
 import { proxyMpRequest } from '~/server/utils/proxy-request';
 
 export default defineEventHandler(async event => {
@@ -39,11 +39,15 @@ export default defineEventHandler(async event => {
     };
   }
 
-  const { nick_name, head_img } = await request(`/api/web/mp/info`, {
-    headers: {
-      Cookie: `auth-key=${authKey}`,
-    },
-  });
+  const token = await cookieStore.getToken(authKey);
+  const mpCookie = await cookieStore.getCookie(authKey);
+  if (!token || !mpCookie) {
+    return {
+      err: '登录态保存失败，请重新扫码登录',
+    };
+  }
+
+  const { nick_name, head_img } = await getMpAccountInfo(event, token, mpCookie);
   if (!nick_name) {
     return {
       err: '获取公众号昵称失败，请稍后重试',
