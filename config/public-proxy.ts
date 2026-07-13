@@ -2,19 +2,19 @@
  * 公共代理节点
  */
 export const PUBLIC_PROXY_LIST: string[] = [
-  ...getDomainProxyList('worker-proxy.asia'),
-  ...getDomainProxyList('net-proxy.asia'),
-  ...getDomainProxyList('1235566.space'),
-  ...getDomainProxyList('worker-proxy.shop'),
-  ...getDomainProxyList('worker-proxys.cyou'),
-  ...getDomainProxyList('worker-proxy.cyou'),
+  'https://wechat01.wanwu.co/',
+  'https://wechat02.wanwu.co/',
+  'https://wechat03.wanwu.co/',
+  'https://wechat04.wanwu.co/',
+  'https://wechat05.wanwu.co/',
+  'https://wechat06.wanwu.co/',
+  'https://wechat07.wanwu.co/',
+  'https://wechat08.wanwu.co/',
+  'https://wechat09.wanwu.co/',
+  'https://wechat10.wanwu.co/',
+  'https://wechat11.wanwu.co/',
+  'https://wechat12.wanwu.co/',
+  'https://wechat13.wanwu.co/',
+  'https://wechat14.wanwu.co/',
+  'https://wechat15.wanwu.co/',
 ];
-
-// 生成从00.到15.的16个二级域名
-function getDomainProxyList(domain: string): string[] {
-  const list: string[] = [];
-  for (let i = 0; i < 16; i++) {
-    list.push(`https://${('0' + i).slice(-2)}.${domain}`);
-  }
-  return list;
-}
