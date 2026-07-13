@@ -289,6 +289,7 @@ export async function getTokenFromStore(event: H3Event): Promise<string | null> 
 export function getCookiesFromRequest(event: H3Event): string {
   const cookies = parseCookies(event);
   return Object.keys(cookies)
+    .filter(key => key === 'uuid')
     .map(key => `${key}=${encodeURIComponent(cookies[key])}`)
     .join(';');
 }

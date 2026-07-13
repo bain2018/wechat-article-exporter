@@ -6,6 +6,59 @@ import { RequestOptions } from '~/server/types';
 import { cookieStore, getCookieFromStore } from '~/server/utils/CookieStore';
 import { logRequest, logResponse } from '~/server/utils/logger';
 
+function isSecureRequest(event: H3Event): boolean {
+  const forwardedProto = getRequestHeader(event, 'x-forwarded-proto');
+  if (forwardedProto) {
+    return forwardedProto.split(',')[0]?.trim().toLowerCase() === 'https';
+  }
+
+  const forwardedSsl = getRequestHeader(event, 'x-forwarded-ssl');
+  if (forwardedSsl) {
+    return forwardedSsl.toLowerCase() === 'on';
+  }
+
+  return Boolean((event.node.req.socket as { encrypted?: boolean }).encrypted);
+}
+
+function getSecureCookieAttribute(event: H3Event): string {
+  return isSecureRequest(event) ? '; Secure' : '';
+}
+
+function findCookieAttribute(parts: string[], name: string): string | undefined {
+  const prefix = `${name.toLowerCase()}=`;
+  return parts.find(part => part.toLowerCase().startsWith(prefix));
+}
+
+function normalizeClientCookie(rawCookie: string, event: H3Event): string | null {
+  const parts = rawCookie
+    .split(';')
+    .map(part => part.trim())
+    .filter(Boolean);
+  const [nameValue] = parts;
+  if (!nameValue) {
+    return null;
+  }
+
+  const [name, ...valueParts] = nameValue.split('=');
+  const value = valueParts.join('=');
+  if (!name || !value) {
+    return null;
+  }
+
+  const attributes = [`${name}=${value}`, 'Path=/'];
+  const expires = findCookieAttribute(parts, 'expires');
+  const maxAge = findCookieAttribute(parts, 'max-age');
+  if (expires) {
+    attributes.push(expires);
+  }
+  if (maxAge) {
+    attributes.push(maxAge);
+  }
+  attributes.push('HttpOnly', 'SameSite=Lax');
+
+  return `${attributes.join('; ')}${getSecureCookieAttribute(event)}`;
+}
+
 /**
  * 代理微信公众号请求
  * @description 备注：只有登录请求(`action=login`)中的 `set-cookie` 才会被写入到 CookieStore 中
@@ -62,8 +115,13 @@ export async function proxyMpRequest(options: RequestOptions) {
 
   // 处理登录请求的 uuid cookie
   if (options.action === 'start_login') {
-    // 提取出 uuid 这个 cookie，并透传给客户端
-    setCookies = mpResponse.headers.getSetCookie().filter(cookie => cookie.startsWith('uuid='));
+    // 提取出 uuid 这个 cookie，并改写为当前站点可用的 host-only cookie。
+    // 微信返回的 Secure cookie 在公网 HTTP 访问时不会被浏览器保存，后续扫码轮询会丢失登录会话。
+    setCookies = mpResponse.headers
+      .getSetCookie()
+      .filter(cookie => cookie.startsWith('uuid='))
+      .map(cookie => normalizeClientCookie(cookie, options.event))
+      .filter((cookie): cookie is string => Boolean(cookie));
   }
 
   // 处理登录成功请求的 cookie
@@ -92,11 +150,12 @@ export async function proxyMpRequest(options: RequestOptions) {
       }
       console.log('cookie 写入成功');
 
+      const secureCookieAttribute = getSecureCookieAttribute(options.event);
       setCookies = [
-        `auth-key=${authKey}; Path=/; Expires=${dayjs().add(4, 'days').toString()}; Secure; HttpOnly`,
+        `auth-key=${authKey}; Path=/; Expires=${dayjs().add(4, 'days').toDate().toUTCString()}; HttpOnly; SameSite=Lax${secureCookieAttribute}`,
 
         // 登录成功后，删除浏览器的 uuid cookie
-        `uuid=EXPIRED; Path=/; Expires=${dayjs().subtract(1, 'days').toString()}; Secure; HttpOnly`,
+        `uuid=EXPIRED; Path=/; Expires=${dayjs().subtract(1, 'days').toDate().toUTCString()}; HttpOnly; SameSite=Lax${secureCookieAttribute}`,
       ];
     } catch (error) {
       console.error('action(login) failed:', error);
