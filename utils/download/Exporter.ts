@@ -1,4 +1,6 @@
 import dayjs from 'dayjs';
+import { saveAs } from 'file-saver';
+import JSZip from 'jszip';
 import mime from 'mime';
 import TurndownService from 'turndown';
 import { filterInvalidFilenameChars, sleep } from '#shared/utils/helpers';
@@ -34,6 +36,8 @@ export class Exporter extends BaseDownloader {
 
   // 导出的根目录
   private exportRootDirectoryHandle: FileSystemDirectoryHandle | null = null;
+  // 不支持 File System Access API 时，降级为 ZIP 下载
+  private exportArchive: JSZip | null = null;
   private readonly resources: Set<{ url: string; fakeid: string }>;
 
   constructor(urls: string[], options: DownloadOptions = {}) {
@@ -48,7 +52,7 @@ export class Exporter extends BaseDownloader {
     }
 
     if (['html', 'txt', 'markdown', 'word', 'pdf'].includes(type)) {
-      // 这些类型需要实时写入文件系统，提前初始化导出目录句柄
+      // 这些类型需要写入多个文件，提前初始化目录或 ZIP 导出目标
       try {
         await this.acquireExportDirectoryHandle();
       } catch (err) {
@@ -96,6 +100,8 @@ export class Exporter extends BaseDownloader {
         // 3. 将资源以 data URL 嵌入，生成 PDF 文件
         await this.exportPdfFiles();
       }
+
+      await this.downloadExportArchive();
     } finally {
       this.isRunning = false;
       const elapse = Math.round((Date.now() - start) / 1000);
@@ -901,17 +907,49 @@ ${commentHTML}
 
   // 获取文件存储目录
   private async acquireExportDirectoryHandle(): Promise<void> {
-    if (!this.exportRootDirectoryHandle) {
-      // @ts-ignore
-      this.exportRootDirectoryHandle = await window.showDirectoryPicker({
+    if (this.exportRootDirectoryHandle || this.exportArchive) {
+      return;
+    }
+
+    const showDirectoryPicker = (
+      window as typeof window & {
+        showDirectoryPicker?: (options: {
+          mode: 'readwrite';
+          startIn: 'downloads';
+        }) => Promise<FileSystemDirectoryHandle>;
+      }
+    ).showDirectoryPicker;
+
+    if (typeof showDirectoryPicker === 'function') {
+      this.exportRootDirectoryHandle = await showDirectoryPicker.call(window, {
         mode: 'readwrite',
         startIn: 'downloads',
       });
+      return;
     }
+
+    console.info('当前浏览器不支持目录选择，将导出内容打包为 ZIP 文件下载');
+    this.exportArchive = new JSZip();
+  }
+
+  // 下载不支持目录写入时生成的 ZIP 文件
+  private async downloadExportArchive(): Promise<void> {
+    if (!this.exportArchive) {
+      return;
+    }
+
+    const blob = await this.exportArchive.generateAsync({ type: 'blob' });
+    saveAs(blob, '微信公众号文章.zip');
+    this.exportArchive = null;
   }
 
   // 写入文件
   public async writeFile(path: string, file: Blob): Promise<void> {
+    if (this.exportArchive) {
+      this.exportArchive.file(path, file);
+      return;
+    }
+
     const segment = path.split('/');
     const filename = segment[segment.length - 1];
     let directory = this.exportRootDirectoryHandle!;
