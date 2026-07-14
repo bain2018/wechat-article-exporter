@@ -33,6 +33,7 @@ ENV HTTP_PROXY= \
     http_proxy= \
     https_proxy= \
     all_proxy=
+ENV PUPPETEER_NO_SANDBOX=true
 
 RUN rm -rf /app/server /app/public /app/nitro.json
 COPY --from=build-env /src/.output ./

@@ -44,6 +44,7 @@ RUN apt-get update && apt-get install -y \
 
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+ENV PUPPETEER_NO_SANDBOX=true
 
 # 设置工作目录
 WORKDIR /app
