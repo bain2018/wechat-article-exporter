@@ -148,23 +148,35 @@ function extractBalancedLiteral(source: string, start: number): string | null {
   return null;
 }
 
+function findLiteralsAfterAssignments(html: string, assignmentName: string): string[] {
+  const assignmentPattern = new RegExp(`${escapeRegExp(assignmentName)}\\s*=`, 'g');
+  const literals: string[] = [];
+
+  for (const match of html.matchAll(assignmentPattern)) {
+    let index = (match.index ?? 0) + match[0].length;
+    while (/\s/.test(html[index] || '')) {
+      index++;
+    }
+
+    if (html[index] === "'" || html[index] === '"') {
+      const parsed = readStringLiteral(html, index);
+      if (parsed) {
+        literals.push(html.slice(index, parsed.end));
+      }
+      continue;
+    }
+
+    const literal = extractBalancedLiteral(html, index);
+    if (literal) {
+      literals.push(literal);
+    }
+  }
+
+  return literals;
+}
+
 function findLiteralAfterAssignment(html: string, assignmentName: string): string | null {
-  const match = new RegExp(`${escapeRegExp(assignmentName)}\\s*=`).exec(html);
-  if (!match) {
-    return null;
-  }
-
-  let index = match.index + match[0].length;
-  while (/\s/.test(html[index] || '')) {
-    index++;
-  }
-
-  if (html[index] === "'" || html[index] === '"') {
-    const parsed = readStringLiteral(html, index);
-    return parsed ? html.slice(index, parsed.end) : null;
-  }
-
-  return extractBalancedLiteral(html, index);
+  return findLiteralsAfterAssignments(html, assignmentName)[0] ?? null;
 }
 
 function normalizeJsLiteralToJson(literal: string): string {
@@ -191,21 +203,37 @@ function normalizeJsLiteralToJson(literal: string): string {
     .replace(/,\s*([}\]])/g, '$1');
 }
 
+function tryParseWechatDataLiteral<T>(literal: string): { value: T } | { error: unknown } {
+  try {
+    return { value: JSON.parse(normalizeJsLiteralToJson(literal)) as T };
+  } catch (error) {
+    return { error };
+  }
+}
+
 export function parseWechatDataLiteral<T>(literal: string | null | undefined): T | null {
   if (!literal) {
     return null;
   }
 
-  try {
-    return JSON.parse(normalizeJsLiteralToJson(literal)) as T;
-  } catch (error) {
-    console.warn('微信脚本数据解析失败:', error);
-    return null;
+  const result = tryParseWechatDataLiteral<T>(literal);
+  if ('value' in result) {
+    return result.value;
   }
+
+  console.warn('微信脚本数据解析失败:', result.error);
+  return null;
 }
 
 export function parseWechatAssignment<T>(html: string, assignmentName: string): T | null {
-  return parseWechatDataLiteral<T>(findLiteralAfterAssignment(html, assignmentName));
+  for (const literal of findLiteralsAfterAssignments(html, assignmentName)) {
+    const result = tryParseWechatDataLiteral<T>(literal);
+    if ('value' in result) {
+      return result.value;
+    }
+  }
+
+  return null;
 }
 
 export function parseWechatStringAssignment(html: string, assignmentName: string): string | null {
