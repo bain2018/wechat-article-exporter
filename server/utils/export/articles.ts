@@ -2,12 +2,12 @@
 // @date 2026-06-26 10:14:51
 // @comment 基于 PostgreSQL 与 MinIO 缓存生成微信公众号文章导出文件
 
-import dayjs from 'dayjs';
 import * as cheerio from 'cheerio';
+import dayjs from 'dayjs';
 import JSZip from 'jszip';
-import TurndownService from 'turndown';
 import { filterInvalidFilenameChars, formatTimeStamp } from '#shared/utils/helpers';
 import { normalizeHtml, parseCgiDataNew } from '#shared/utils/html';
+import { htmlToMarkdown } from '#shared/utils/markdown';
 import { ensurePdfRendererAvailable, renderHtmlToPdf } from '~/server/utils/pdf/render';
 import { createPdfResourceResolver } from '~/server/utils/pdf/resources';
 import { isRemoteStorageEnabled } from '~/server/utils/storage/cache';
@@ -574,7 +574,6 @@ async function buildTextLikeArchive(
 ): Promise<ArticleExportResult> {
   const zip = new JSZip();
   const replies = options.includeComments ? await loadCommentReplies(articles) : new Map<string, any>();
-  const turndown = options.format === 'markdown' ? new TurndownService() : null;
   let fileCount = 0;
 
   for (let index = 0; index < articles.length; index++) {
@@ -591,7 +590,7 @@ async function buildTextLikeArchive(
     if (options.format === 'html') {
       content = html;
     } else if (options.format === 'markdown') {
-      content = turndown!.turndown(markdownHtml(html));
+      content = htmlToMarkdown(html);
     } else {
       content = await renderArticleText(item, rawHtml);
     }
@@ -902,12 +901,6 @@ function isPayPreview(cgiData: any): boolean {
   }
   const content = String(cgiData.content_noencode || '').trim();
   return !content || content.includes('mp-pay-preview-filter');
-}
-
-function markdownHtml(html: string): string {
-  const $ = cheerio.load(html);
-  $('style, script').remove();
-  return $('body').html() || $.root().html() || html;
 }
 
 function escapeHtml(value: string): string {

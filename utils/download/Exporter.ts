@@ -2,9 +2,9 @@ import dayjs from 'dayjs';
 import { saveAs } from 'file-saver';
 import JSZip from 'jszip';
 import mime from 'mime';
-import TurndownService from 'turndown';
 import { filterInvalidFilenameChars, sleep } from '#shared/utils/helpers';
 import { parseCgiDataNew } from '#shared/utils/html';
+import { htmlToMarkdown } from '#shared/utils/markdown';
 import { renderHTMLFromCgiDataNew, renderTextFromCgiDataNew } from '#shared/utils/renderer';
 import usePreferences from '~/composables/usePreferences';
 import { getArticleByLink } from '~/store/v2/article';
@@ -438,15 +438,13 @@ export class Exporter extends BaseDownloader {
     const total = this.urls.length;
     this.emit('export:total', total);
 
-    const turndownService = new TurndownService();
-
     await this.processFileExportQueue(this.urls, async url => {
       const filename = await this.exportDirName(url);
       console.log(`开始导出: ${filename}(${url})`);
 
       const content = await this.getRenderedHTML(url);
       if (!content) return;
-      const markdown = turndownService.turndown(content);
+      const markdown = htmlToMarkdown(content);
 
       const blob = new Blob([markdown], { type: 'text/markdown' });
       await this.writeFile(filename + '.md', blob);
