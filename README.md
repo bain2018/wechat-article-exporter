@@ -83,11 +83,13 @@ MINIO_REGION=us-east-1
 
 开启后，PostgreSQL 保存公众号、文章、下载状态、评论、阅读量和对象索引；MinIO 保存 HTML、图片、CSS、音视频等 Blob 内容。未配置完整环境变量时会自动回退到 IndexedDB。
 
+PDF 导出在该模式下由服务端直接读取 PostgreSQL/MinIO 缓存并通过 Chromium 渲染，浏览器只接收最终 PDF 或 ZIP，不再中转文章 HTML 和 Base64 资源。首次导出缺失的微信图片/CSS 会由服务端按域名白名单、并发和大小限制写入 MinIO；同步批量导出默认最多 20 篇，可通过 `PDF_EXPORT_MAX_ARTICLES` 调整，建议结合容器内存与 `PDF_RENDER_CONCURRENCY` 评估后再放大。
+
 
 ## :dart: 特性
 
 - [x] 搜索公众号，支持关键字搜索
-- [x] 支持导出 html/json/excel/txt/md/docx 格式(html 格式打包了图片和样式文件，能够保证100%还原文章样式)
+- [x] 支持导出 html/json/excel/txt/md/docx/pdf 格式(html 格式打包了图片和样式文件，能够保证100%还原文章样式)
 - [x] 缓存文章列表数据，减少接口请求次数
 - [x] 支持文章过滤，包括作者、标题、发布时间、原创标识、所属合集等
 - [x] 支持合集下载

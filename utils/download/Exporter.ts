@@ -11,6 +11,7 @@ import { getArticleByLink } from '~/store/v2/article';
 import { getHtmlCache, type HtmlAsset } from '~/store/v2/html';
 import { getAccountNameByFakeid, getAllInfo, type MpAccount } from '~/store/v2/info';
 import { getMetadataCache } from '~/store/v2/metadata';
+import { isRemoteStorageEnabled } from '~/store/v2/remote';
 import { getResourceCache, updateResourceCache } from '~/store/v2/resource';
 import { getResourceMapCache, updateResourceMapCache } from '~/store/v2/resource-map';
 import type { Preferences } from '~/types/preferences';
@@ -51,7 +52,8 @@ export class Exporter extends BaseDownloader {
       throw new Error('导出任务正在运行中，无需重复启动');
     }
 
-    if (['html', 'txt', 'markdown', 'word', 'pdf'].includes(type)) {
+    const useRemotePdfExport = type === 'pdf' && (await isRemoteStorageEnabled());
+    if (['html', 'txt', 'markdown', 'word', 'pdf'].includes(type) && !useRemotePdfExport) {
       // 这些类型需要写入多个文件，提前初始化目录或 ZIP 导出目标
       try {
         await this.acquireExportDirectoryHandle();
@@ -66,9 +68,15 @@ export class Exporter extends BaseDownloader {
     const start = Date.now();
     this.emit('export:begin');
 
-    this.allAccountInfo = await getAllInfo();
-
+    let succeeded = false;
     try {
+      if (useRemotePdfExport) {
+        await this.exportRemotePdfFiles();
+        succeeded = true;
+        return;
+      }
+
+      this.allAccountInfo = await getAllInfo();
       if (this.exportType === 'excel') {
         await this.exportExcelFiles();
       } else if (this.exportType === 'json') {
@@ -102,10 +110,13 @@ export class Exporter extends BaseDownloader {
       }
 
       await this.downloadExportArchive();
+      succeeded = true;
     } finally {
       this.isRunning = false;
-      const elapse = Math.round((Date.now() - start) / 1000);
-      this.emit('export:finish', elapse);
+      if (succeeded) {
+        const elapse = Math.round((Date.now() - start) / 1000);
+        this.emit('export:finish', elapse);
+      }
       this.cancelAllPending();
     }
   }
@@ -209,11 +220,12 @@ export class Exporter extends BaseDownloader {
   private async processFileExportQueue(
     urls: string[],
     task: (url: string) => Promise<void>,
-    options: { concurrency?: number; progressEvent?: string } = {}
+    options: { concurrency?: number; progressEvent?: string; failOnError?: boolean } = {}
   ): Promise<void> {
-    const { concurrency = 5, progressEvent = 'export:progress' } = options;
+    const { concurrency = 5, progressEvent = 'export:progress', failOnError = false } = options;
     const activePromises: Set<Promise<void>> = new Set();
     const queue = [...urls];
+    const failures: Array<{ url: string; error: unknown }> = [];
     let completedCount = 0;
 
     while (queue.length > 0 || activePromises.size > 0) {
@@ -226,6 +238,7 @@ export class Exporter extends BaseDownloader {
           })
           .catch(e => {
             console.error(`导出文件失败(url: ${url}):`, e);
+            failures.push({ url, error: e });
             completedCount++;
             this.emit(progressEvent, completedCount);
           });
@@ -238,6 +251,11 @@ export class Exporter extends BaseDownloader {
       if (activePromises.size > 0) {
         await Promise.race(activePromises);
       }
+    }
+
+    if (failOnError && failures.length > 0) {
+      const firstError = failures[0].error instanceof Error ? failures[0].error.message : String(failures[0].error);
+      throw new Error(`${failures.length} 篇文章导出失败，首个错误: ${firstError}`);
     }
   }
 
@@ -455,6 +473,32 @@ export class Exporter extends BaseDownloader {
   }
 
   /**
+   * 远端存储模式直接请求服务端导出。
+   * 服务端从 PostgreSQL/MinIO 读取文章与资源，浏览器只接收最终 PDF/ZIP。
+   */
+  private async exportRemotePdfFiles(): Promise<void> {
+    this.emit('export:write', this.urls.length);
+    const response = await fetch('/api/public/v1/export', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        format: 'pdf',
+        urls: this.urls,
+        includeComments: preferences.value.exportConfig.exportHtmlIncludeComments,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(await readExportError(response));
+    }
+
+    const blob = await response.blob();
+    const filename = downloadFilename(response.headers.get('content-disposition')) || '微信公众号文章.pdf';
+    saveAs(blob, filename);
+    this.emit('export:write:progress', this.urls.length);
+  }
+
+  /**
    * 导出 PDF：调用服务端 Puppeteer API 静默生成
    * 复用 normalizeHtml 保留原始微信排版，资源以 data URL 内嵌，
    * 逐篇文章 POST HTML 到服务端，接收 PDF Blob 后写入文件系统。
@@ -468,8 +512,7 @@ export class Exporter extends BaseDownloader {
       async url => {
         const cached = await getHtmlCache(url);
         if (!cached) {
-          console.warn(`文章(url: ${url} )的 html 还未下载，不能导出`);
-          return;
+          throw new Error(`文章(url: ${url})的 HTML 尚未抓取，不能导出 PDF`);
         }
 
         const filename = await this.exportDirName(url);
@@ -511,13 +554,13 @@ export class Exporter extends BaseDownloader {
         });
 
         if (!response.ok) {
-          throw new Error(`PDF 生成失败: ${response.status} ${response.statusText}`);
+          throw new Error(await readExportError(response));
         }
 
         const pdfBlob = await response.blob();
         await this.writeFile(filename + '.pdf', pdfBlob);
       },
-      { concurrency: 2, progressEvent: 'export:write:progress' }
+      { concurrency: 2, progressEvent: 'export:write:progress', failOnError: true }
     );
     await sleep(100);
   }
@@ -995,4 +1038,33 @@ ${commentHTML}
     }
     return dirnameTpl;
   }
+}
+
+async function readExportError(response: Response): Promise<string> {
+  const fallback = `PDF 生成失败: ${response.status} ${response.statusText}`;
+  const text = await response.text().catch(() => '');
+  if (!text) {
+    return fallback;
+  }
+  try {
+    const payload = JSON.parse(text) as { statusMessage?: string; message?: string };
+    return payload.message || payload.statusMessage || fallback;
+  } catch {
+    return text.length <= 500 ? text : fallback;
+  }
+}
+
+function downloadFilename(contentDisposition: string | null): string | undefined {
+  if (!contentDisposition) {
+    return undefined;
+  }
+  const encoded = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+  if (encoded) {
+    try {
+      return decodeURIComponent(encoded);
+    } catch {
+      // 继续尝试兼容 filename 参数。
+    }
+  }
+  return contentDisposition.match(/filename="([^"]+)"/i)?.[1];
 }

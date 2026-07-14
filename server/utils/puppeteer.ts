@@ -1,39 +1,54 @@
+// @author Codex
+// @date 2026-07-14 10:49:30
+// @comment 复用并安全管理服务端 PDF 渲染所需的 Chromium 浏览器实例
+
 import type { Browser } from 'puppeteer';
 
 let browser: Browser | null = null;
+let launchPromise: Promise<Browser> | null = null;
 
 export async function getBrowser(): Promise<Browser> {
   if (browser && browser.connected) {
     return browser;
   }
 
+  if (!launchPromise) {
+    launchPromise = launchBrowser().finally(() => {
+      launchPromise = null;
+    });
+  }
+
+  return launchPromise;
+}
+
+async function launchBrowser(): Promise<Browser> {
   const puppeteer = await import('puppeteer').then(m => m.default);
 
-  const launchArgs = [
-    '--no-sandbox',
-    '--disable-setuid-sandbox',
-    '--disable-dev-shm-usage',
-    '--disable-gpu',
-    '--disable-extensions',
-    '--font-render-hinting=none',
-  ];
+  const launchArgs = ['--disable-dev-shm-usage', '--disable-gpu', '--disable-extensions', '--font-render-hinting=none'];
+  if (process.env.PUPPETEER_NO_SANDBOX === 'true') {
+    launchArgs.push('--no-sandbox', '--disable-setuid-sandbox');
+  }
 
-  browser = await puppeteer.launch({
+  const launchedBrowser = await puppeteer.launch({
     headless: true,
     args: launchArgs,
     executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
   });
 
-  browser.on('disconnected', () => {
-    browser = null;
+  launchedBrowser.on('disconnected', () => {
+    if (browser === launchedBrowser) {
+      browser = null;
+    }
   });
 
-  return browser;
+  browser = launchedBrowser;
+  return launchedBrowser;
 }
 
 export async function closeBrowser(): Promise<void> {
-  if (browser) {
-    await browser.close();
+  const current = browser || (launchPromise ? await launchPromise.catch(() => null) : null);
+  if (current) {
+    await current.close();
     browser = null;
   }
 }

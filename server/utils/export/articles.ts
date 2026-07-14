@@ -8,13 +8,15 @@ import JSZip from 'jszip';
 import TurndownService from 'turndown';
 import { filterInvalidFilenameChars, formatTimeStamp } from '#shared/utils/helpers';
 import { normalizeHtml, parseCgiDataNew } from '#shared/utils/html';
+import { ensurePdfRendererAvailable, renderHtmlToPdf } from '~/server/utils/pdf/render';
+import { createPdfResourceResolver } from '~/server/utils/pdf/resources';
 import { isRemoteStorageEnabled } from '~/server/utils/storage/cache';
 import { refreshMissingExportRowsByFakeid, refreshMissingExportRowsByUrls } from '~/server/utils/storage/exportRows';
 import { getObject } from '~/server/utils/storage/minio';
 import { getPool } from '~/server/utils/storage/postgres';
 import { createExcelBuffer, type ExcelExportEntity } from '~/utils/exporter';
 
-const SUPPORTED_FORMATS = ['excel', 'json', 'html', 'txt', 'markdown'] as const;
+const SUPPORTED_FORMATS = ['excel', 'json', 'html', 'txt', 'markdown', 'pdf'] as const;
 const METRIC_FIELDS = ['readNum', 'oldLikeNum', 'shareNum', 'likeNum', 'commentNum'] as const;
 
 export type ArticleExportFormat = (typeof SUPPORTED_FORMATS)[number];
@@ -111,7 +113,7 @@ export async function buildArticleExport(options: ArticleExportOptions): Promise
     throw new ArticleExportError(400, 'fakeid 和 urls 至少需要提供一个');
   }
 
-  const loaded = await loadArticles(options);
+  const loaded = await loadArticles(limitPdfLoad(options));
   const articles = loaded.articles;
   if (articles.length === 0) {
     throw new ArticleExportError(404, '没有找到可导出的文章缓存');
@@ -157,6 +159,20 @@ export async function buildArticleExport(options: ArticleExportOptions): Promise
     };
   }
 
+  if (options.format === 'pdf') {
+    const result = await buildPdfArchive(articles, {
+      filename,
+      includeComments: options.includeComments ?? true,
+      missingContent,
+    });
+    return {
+      ...result,
+      totalCount: loaded.totalCount,
+      page: loaded.page,
+      pageSize: loaded.pageSize,
+    };
+  }
+
   const result = await buildTextLikeArchive(articles, {
     format: options.format,
     filename,
@@ -177,6 +193,27 @@ function normalizeFormat(format: string): ArticleExportFormat {
     throw new ArticleExportError(400, `不支持的导出格式: ${format}`);
   }
   return normalized as ArticleExportFormat;
+}
+
+function limitPdfLoad(options: ArticleExportOptions): ArticleExportOptions {
+  if (options.format !== 'pdf') {
+    return options;
+  }
+
+  const maxArticles = positiveInteger(process.env.PDF_EXPORT_MAX_ARTICLES, 20);
+  if ((options.urls?.length || 0) > maxArticles) {
+    throw new ArticleExportError(413, `同步 PDF 导出单次最多支持 ${maxArticles} 篇文章，请分批导出`);
+  }
+
+  const requestedLimit = options.pageSize ?? options.limit;
+  if (requestedLimit !== undefined && requestedLimit > maxArticles) {
+    throw new ArticleExportError(413, `同步 PDF 导出单次最多支持 ${maxArticles} 篇文章，请缩小分页大小`);
+  }
+
+  if (!options.urls?.length && requestedLimit === undefined) {
+    return { ...options, limit: maxArticles + 1 };
+  }
+  return options;
 }
 
 function parseSorts(input: Record<string, any>): MetricSort[] | undefined {
@@ -576,6 +613,126 @@ async function buildTextLikeArchive(
   };
 }
 
+async function buildPdfArchive(
+  articles: LoadedArticle[],
+  options: {
+    filename: string;
+    includeComments: boolean;
+    missingContent: string[];
+  },
+): Promise<ArticleExportResult> {
+  const maxArticles = positiveInteger(process.env.PDF_EXPORT_MAX_ARTICLES, 20);
+  if (articles.length > maxArticles) {
+    throw new ArticleExportError(413, `同步 PDF 导出单次最多支持 ${maxArticles} 篇文章，请分批导出`);
+  }
+
+  try {
+    await ensurePdfRendererAvailable();
+  } catch (error) {
+    if (isPuppeteerUnavailable(error)) {
+      throw new ArticleExportError(501, '当前部署环境不支持 PDF 导出，请使用包含 Chromium 的 Docker 部署');
+    }
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new ArticleExportError(503, `PDF 渲染器启动失败: ${reason}`);
+  }
+
+  const replies = options.includeComments ? await loadCommentReplies(articles) : new Map<string, any>();
+  const files: Array<{ filename: string; body: Buffer }> = [];
+
+  for (let index = 0; index < articles.length; index++) {
+    const item = articles[index];
+    const rawHtml = await readArticleHtml(item);
+    if (!rawHtml) {
+      options.missingContent.push(item.article.link);
+      continue;
+    }
+
+    const renderedHtml = await renderArticleHtml(item, rawHtml, replies, options.includeComments);
+    const pdfHtml = preparePdfHtml(renderedHtml);
+    const resolver = await createPdfResourceResolver(item.article.link, item.article.fakeid, pdfHtml);
+
+    try {
+      const body = await renderHtmlToPdf(pdfHtml, { resourceResolver: resolver });
+      files.push({ filename: articleFileName(item.article, index, 'pdf'), body });
+    } catch (error) {
+      if (isPuppeteerUnavailable(error)) {
+        throw new ArticleExportError(501, '当前部署环境不支持 PDF 导出，请使用包含 Chromium 的 Docker 部署');
+      }
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new ArticleExportError(500, `PDF 生成失败(${item.article.title || item.article.link}): ${reason}`);
+    }
+  }
+
+  if (files.length === 0) {
+    throw new ArticleExportError(409, '所选文章均未抓取内容，无法导出 PDF');
+  }
+
+  if (files.length === 1) {
+    return {
+      body: files[0].body,
+      contentType: 'application/pdf',
+      filename: `${options.filename}.pdf`,
+      articleCount: articles.length,
+      missingContent: options.missingContent,
+    };
+  }
+
+  const zip = new JSZip();
+  for (const file of files) {
+    zip.file(file.filename, file.body);
+  }
+  return {
+    body: await zip.generateAsync({ type: 'nodebuffer', compression: 'STORE' }),
+    contentType: 'application/zip',
+    filename: `${options.filename}-pdf.zip`,
+    articleCount: articles.length,
+    missingContent: options.missingContent,
+  };
+}
+
+function preparePdfHtml(html: string): string {
+  const $ = cheerio.load(html);
+  $('script, noscript, iframe, frame, object, embed, applet, base').remove();
+  $('meta[http-equiv="refresh"]').remove();
+  $('link').each((_, element) => {
+    const rel = ($(element).attr('rel') || '').toLowerCase();
+    if (!rel.split(/\s+/).includes('stylesheet')) {
+      $(element).remove();
+    }
+  });
+  $('*').each((_, element) => {
+    if (!('attribs' in element)) {
+      return;
+    }
+    for (const attribute of Object.keys(element.attribs)) {
+      if (attribute.toLowerCase().startsWith('on') || attribute.toLowerCase() === 'srcdoc') {
+        $(element).removeAttr(attribute);
+      }
+    }
+  });
+  $('img').each((_, element) => {
+    const image = $(element);
+    const source = image.attr('src') || image.attr('data-src');
+    if (source) {
+      image.attr('src', source);
+    }
+    image.removeAttr('data-src').removeAttr('srcset').removeAttr('data-srcset');
+    image.attr('loading', 'eager').attr('decoding', 'sync');
+  });
+  $('head').append(`<style>
+    @page { margin: 0; }
+    html, body { background: #fff !important; background-color: #fff !important; }
+    p { margin-block: 0.3em !important; }
+    img { max-width: 100%; }
+  </style>`);
+  return $.html();
+}
+
+function isPuppeteerUnavailable(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("Cannot find package 'puppeteer'") || message.includes('Could not find Chrome');
+}
+
 function applyMetadata(row: ExcelExportEntity, metadata: any) {
   if (!metadata) {
     return;
@@ -897,6 +1054,11 @@ function articleFileName(article: any, index: number, ext: string): string {
 function safeFilename(input: string): string {
   const safe = filterInvalidFilenameChars(input || '').replace(/^_+|_+$/g, '');
   return safe || 'export';
+}
+
+function positiveInteger(raw: string | undefined, fallback: number): number {
+  const value = Number(raw);
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
 }
 
 function resolvePagination(options: ArticleExportOptions) {
